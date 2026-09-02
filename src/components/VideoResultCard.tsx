@@ -179,8 +179,8 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
         progress: 5,
       }));
 
-      // Step 2: Fetch in 4MB chunks (under 1s per request on Vercel)
-      const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB
+      // Step 2: Fetch in 6MB chunks for high-speed buffering
+      const CHUNK_SIZE = 6 * 1024 * 1024; // 6 MB
       const chunks: Uint8Array[] = [];
       let currentByte = 0;
 
