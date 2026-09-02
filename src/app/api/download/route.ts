@@ -36,8 +36,9 @@ async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promis
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Cookie': 'age_verified=1; accessAgeDisclaimerPH=1; platform=pc;',
+        'Cookie': 'age_verified=1; accessAgeDisclaimerPH=1; accessAgeDisclaimerUK=1; accessPH=1; platform=pc; hasVisited=1; il=en;',
         'Referer': 'https://www.pornhub.com/',
+        'Origin': 'https://www.pornhub.com',
       },
       signal: controller.signal,
       cache: 'no-store',
@@ -57,6 +58,7 @@ async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promis
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Referer': 'https://www.pornhub.com/',
+            'Origin': 'https://www.pornhub.com',
             'Accept': 'application/json, text/plain, */*',
           },
         });
@@ -236,8 +238,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     let targetStreamUrl = '';
 
-    // Step 1: If client passed an existing direct CDN URL that is valid and not m3u8, use it
+    // Step 1: Always resolve a fresh signed stream URL from current Lambda's IP
+    // Pornhub CDN strictly binds signed URLs to the requester's IP (&ip=...).
+    // In serverless environments, each Lambda container has a distinct IP.
+    // Fetching the URL from the current Lambda guarantees IP match and eliminates HTTP 474!
+    targetStreamUrl = await getFreshStreamUrl(viewkey, qualityHeight);
+
+    // Step 2: Fallback to passed streamUrl only if fresh resolution failed
     if (
+      !targetStreamUrl &&
       rawStreamUrl &&
       rawStreamUrl.startsWith('http') &&
       !rawStreamUrl.includes('view_video.php') &&
@@ -247,17 +256,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       targetStreamUrl = rawStreamUrl;
     }
 
-    // Step 2: If no direct CDN URL, fetch fresh signed stream URL from embed
-    if (!targetStreamUrl) {
-      targetStreamUrl = await getFreshStreamUrl(viewkey, qualityHeight);
-    }
-
     // Step 3: If still empty, fall back to extractFromPage (prefer non-m3u8)
     if (!targetStreamUrl) {
       const videoData = await extractFromPage(viewkey);
       if (videoData && videoData.formats.length > 0) {
         const matchingFmt =
-          videoData.formats.find((f) => f.quality === cleanQuality && !f.url.includes('.m3u8')) ||
+          videoData.formats.find((f) => f.quality.toLowerCase() === cleanQuality && !f.url.includes('.m3u8')) ||
           videoData.formats.find((f) => !f.url.includes('.m3u8')) ||
           videoData.formats[0];
 
@@ -281,6 +285,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       'Referer': 'https://www.pornhub.com/',
+      'Origin': 'https://www.pornhub.com',
       'Accept': '*/*',
       'Accept-Encoding': 'identity',
     };
@@ -288,9 +293,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       upstreamHeaders['Range'] = clientRange;
     }
 
-    const upstreamRes = await fetch(targetStreamUrl, {
+    let upstreamRes = await fetch(targetStreamUrl, {
       headers: upstreamHeaders,
     });
+
+    // If HTTP 474 (IP mismatch) or 403, immediately re-request fresh URL from current IP and retry once!
+    if (upstreamRes.status === 474 || upstreamRes.status === 403) {
+      const freshRetryUrl = await getFreshStreamUrl(viewkey, qualityHeight);
+      if (freshRetryUrl && freshRetryUrl !== targetStreamUrl) {
+        targetStreamUrl = freshRetryUrl;
+        upstreamRes = await fetch(targetStreamUrl, {
+          headers: upstreamHeaders,
+        });
+      }
+    }
 
     if (!upstreamRes.ok || !upstreamRes.body) {
       return new NextResponse(`Upstream media server returned HTTP ${upstreamRes.status}. Please refresh and retry.`, { status: 502 });
