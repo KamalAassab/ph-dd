@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const preferredRegion = ['fra1', 'cdg1', 'lhr1'];
+export const preferredRegion = 'fra1';
 
 /**
  * Thumbnail proxy endpoint.
