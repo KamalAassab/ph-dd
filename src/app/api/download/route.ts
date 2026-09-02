@@ -111,8 +111,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           const fileStream = fs.createReadStream(cachedFilePath, { start, end });
           const webStream = new ReadableStream<Uint8Array>({
             start(controller) {
-              fileStream.on('data', (chunk: Buffer) => {
-                controller.enqueue(new Uint8Array(chunk));
+              fileStream.on('data', (chunk: Buffer | string) => {
+                controller.enqueue(typeof chunk === 'string' ? Buffer.from(chunk) : new Uint8Array(chunk));
               });
               fileStream.on('end', () => {
                 controller.close();
@@ -144,8 +144,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         const fileStream = fs.createReadStream(cachedFilePath);
         const webStream = new ReadableStream<Uint8Array>({
           start(controller) {
-            fileStream.on('data', (chunk: Buffer) => {
-              controller.enqueue(new Uint8Array(chunk));
+            fileStream.on('data', (chunk: Buffer | string) => {
+              controller.enqueue(typeof chunk === 'string' ? Buffer.from(chunk) : new Uint8Array(chunk));
             });
             fileStream.on('end', () => {
               controller.close();
