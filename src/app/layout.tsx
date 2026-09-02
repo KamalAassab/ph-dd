@@ -17,13 +17,13 @@ const monoFont = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'PH Video Downloader - Fast 720p HD Video Extractor (yt-dlp Engine)',
-  description: 'Download high quality 720p HD, 480p, 360p videos instantly with yt-dlp extraction engine and direct browser download.',
-  keywords: ['video downloader', '720p downloader', 'yt-dlp video extractor', 'fast mp4 downloader', 'nextjs video downloader'],
-  authors: [{ name: 'Stream Extract Engine' }],
+  title: 'l7wa Hub - Fast HD Video Downloader',
+  description: 'Download high quality 720p HD, 480p, and 240p videos directly with l7wa Hub.',
+  keywords: ['l7wa Hub', 'video downloader', '720p downloader', 'fast mp4 downloader', 'nextjs video downloader'],
+  authors: [{ name: 'l7wa Hub' }],
   openGraph: {
-    title: 'PH Video Downloader - Direct 720p HD Video Extractor',
-    description: 'Ultra-fast yt-dlp video extraction and browser-direct downloading.',
+    title: 'l7wa Hub - Fast HD Video Downloader',
+    description: 'Ultra-fast video extraction and direct downloading with l7wa Hub.',
     type: 'website',
   },
 };
@@ -48,4 +48,3 @@ export default function RootLayout({
     </html>
   );
 }
-

@@ -124,7 +124,7 @@ export default function FeaturesAndFaq() {
 
       {/* Footer */}
       <footer className="pt-6 text-center text-xs text-zinc-600">
-        <p>StreamExtract • Stateless Video Stream Extractor</p>
+        <p>l7wa Hub • Fast & Clean Video Downloader</p>
       </footer>
     </div>
   );

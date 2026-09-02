@@ -11,15 +11,15 @@ export default function Navbar({ onOpenGuide }: NavbarProps) {
   return (
     <header className="w-full border-b border-zinc-800/80 bg-[#09090b] sticky top-0 z-40">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-        {/* Brand Logo */}
+        {/* Brand Logo: l7wa Hub */}
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-[#ff9000] flex items-center justify-center">
             <Download className="w-4 h-4 text-black stroke-[2.5]" />
           </div>
-          <div className="flex items-center gap-1 font-bold text-sm tracking-tight">
-            <span className="text-white">STREAM</span>
-            <span className="bg-[#ff9000] text-black px-1 rounded text-xs font-bold">
-              EXTRACT
+          <div className="flex items-center gap-1 font-bold text-base tracking-tight">
+            <span className="text-white font-extrabold">l7wa</span>
+            <span className="bg-[#ff9000] text-black px-1.5 py-0.5 rounded text-xs font-black uppercase tracking-wide">
+              Hub
             </span>
           </div>
         </div>
