@@ -59,7 +59,9 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
       .replace(/[\\/:*?"<>|]/g, '')
       .trim() || 'video';
 
-    const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&streamUrl=${encodeURIComponent(format.url)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(cleanExactTitle)}`;
+    // IMPORTANT: Never pass the pre-extracted CDN streamUrl — it expires within minutes.
+    // The download API will always re-extract a fresh signed URL at request time.
+    const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(cleanExactTitle)}`;
 
     // Dispatch native browser / IDM download
     window.location.assign(downloadApiUrl);
@@ -116,10 +118,11 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
           
           {/* Thumbnail Container */}
           <div className="md:col-span-5 relative aspect-video rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 group shadow-lg">
-            {data.thumbnail ? (
+            {data.id ? (
+              // Thumbnail served through our proxy to avoid CDN expiry / CORS on iOS
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={data.thumbnail}
+                src={`/api/thumbnail?viewkey=${encodeURIComponent(data.id)}`}
                 alt={data.title}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
                 onError={(e) => {
