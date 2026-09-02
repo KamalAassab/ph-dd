@@ -10,10 +10,10 @@ interface PornSaverLogoProps {
 export default function PornSaverLogo({ className = '', size = 'md' }: PornSaverLogoProps) {
   const textSizeClass = 
     size === 'sm' 
-      ? 'text-lg tracking-tight' 
+      ? 'text-lg' 
       : size === 'lg' 
-      ? 'text-3xl tracking-tight' 
-      : 'text-2xl tracking-tight';
+      ? 'text-3xl' 
+      : 'text-2xl';
 
   const badgePaddingClass = 
     size === 'sm' 
@@ -23,15 +23,15 @@ export default function PornSaverLogo({ className = '', size = 'md' }: PornSaver
       : 'px-2 py-0.5 text-sm sm:text-base rounded-lg';
 
   return (
-    <div className={`flex items-center gap-1 font-black select-none ${textSizeClass} ${className}`}>
-      {/* "Porn": white text, no border, no background */}
-      <span className="text-white font-black tracking-tight">
-        Porn
+    <div className={`flex items-center gap-1.5 font-black uppercase select-none tracking-tight ${textSizeClass} ${className}`}>
+      {/* "PORN": uppercase, pure white text, no border, no background */}
+      <span className="text-white font-black uppercase tracking-tight">
+        PORN
       </span>
 
-      {/* "Saver": black text inside orange card */}
-      <span className={`bg-[#ff9000] text-black font-black uppercase tracking-wide flex items-center justify-center shadow-md shadow-[#ff9000]/20 ${badgePaddingClass}`}>
-        Saver
+      {/* "SAVER": uppercase, black text inside orange card */}
+      <span className={`bg-[#ff9000] text-black font-black uppercase tracking-tight flex items-center justify-center shadow-md shadow-[#ff9000]/20 ${badgePaddingClass}`}>
+        SAVER
       </span>
     </div>
   );
