@@ -11,7 +11,6 @@ import {
   User, 
   Film,
   Loader2,
-  CheckCircle2,
   FileVideo,
   Play,
   X,
@@ -62,7 +61,6 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
     .trim() || 'video';
 
   // Filter formats: ONLY show 720P, 480P, 360P, 240P (hide 1080P and anything > 720)
-  const allowedHeights = [720, 480, 360, 240];
   const displayedFormats = data.formats
     .filter((f) => {
       const h = parseInt(f.quality.replace(/\D/g, ''), 10) || 0;
@@ -353,169 +351,167 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
           </div>
         </div>
 
-        {/* ─── Clean, Minimal, Responsive Conversion Status Card ─── */}
-        <AnimatePresence mode="wait">
-          {conversion.status === 'converting' && (
-            <motion.div 
-              key="converting"
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="mb-6 p-4 rounded-xl bg-zinc-900/90 border border-zinc-800"
-            >
-              <div className="flex items-center justify-between gap-3 mb-2.5">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <Loader2 className="w-4 h-4 animate-spin text-[#ff9000] shrink-0" />
-                  <span className="text-xs sm:text-sm font-semibold text-white truncate">
-                    Converting {conversion.quality} to MP4
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleCancelConversion}
-                  className="text-zinc-500 hover:text-zinc-300 p-1 rounded hover:bg-zinc-800 transition-colors shrink-0"
-                  title="Cancel"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Progress Bar Track */}
-              <div className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden my-2">
-                <div 
-                  className="h-full bg-[#ff9000] rounded-full transition-all duration-200 ease-out"
-                  style={{ width: `${Math.max(2, conversion.progress)}%` }}
-                />
-              </div>
-
-              {/* Progress Numbers */}
-              <div className="flex items-center justify-between text-[11px] text-zinc-400 font-mono mt-1.5">
-                <span>
-                  {conversion.totalBytes > 0 
-                    ? `${(conversion.receivedBytes / (1024 * 1024)).toFixed(1)} MB / ${(conversion.totalBytes / (1024 * 1024)).toFixed(1)} MB`
-                    : 'Connecting...'
-                  }
-                </span>
-                <span className="text-white font-semibold">{conversion.progress}%</span>
-              </div>
-            </motion.div>
-          )}
-
-          {conversion.status === 'ready' && (
-            <motion.div 
-              key="ready"
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="mb-6 p-4 rounded-xl bg-zinc-900/90 border border-emerald-500/40"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs sm:text-sm font-bold text-white">
-                        {conversion.quality} MP4 Ready
-                      </span>
-                      {conversion.formattedSize && (
-                        <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded">
-                          {conversion.formattedSize}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-zinc-400 truncate mt-0.5">
-                      Ready to save directly to your device.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 mt-2 sm:mt-0">
-                  {conversion.blobUrl && (
-                    <a
-                      href={conversion.blobUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="h-9 px-3 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 flex items-center justify-center gap-1 transition-colors shrink-0"
-                    >
-                      <Play className="w-3 h-3 fill-current" />
-                      <span>View</span>
-                    </a>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={handleDownloadSavedFile}
-                    className="h-9 flex-1 sm:flex-initial px-4 rounded-lg text-xs sm:text-sm font-bold bg-[#ff9000] hover:bg-[#ffa31a] text-black flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    <Download className="w-4 h-4 stroke-[2.5]" />
-                    <span>Download MP4</span>
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {conversion.status === 'error' && (
-            <motion.div
-              key="error"
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="mb-6 p-4 rounded-xl bg-red-950/20 border border-red-500/30 flex items-center justify-between gap-3"
-            >
-              <div className="flex items-center gap-2 text-xs text-red-300 min-w-0">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                <span className="truncate">{conversion.errorMessage || 'Conversion failed.'}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const matchingFmt = displayedFormats.find((f) => f.quality === conversion.quality) || displayedFormats[0];
-                  if (matchingFmt) handleStartConversion(matchingFmt);
-                }}
-                className="text-xs text-white bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-md border border-zinc-700 transition-colors shrink-0 font-medium"
-              >
-                Retry
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ─── Resolutions List (240P, 360P, 480P, 720P) ─── */}
+        {/* ─── Resolutions List with In-Card Conversion Bar ─── */}
         <div>
           <div className="flex items-center justify-between mb-3 text-xs text-zinc-400 font-medium">
             <span>Select Resolution</span>
             <span>{displayedFormats.length} Available</span>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {displayedFormats.map((fmt) => {
               const isConvertingThis = conversion.status === 'converting' && conversion.quality === fmt.quality;
               const isReadyThis = conversion.status === 'ready' && conversion.quality === fmt.quality;
+              const isErrorThis = conversion.status === 'error' && conversion.quality === fmt.quality;
               const isCopied = copiedLink === fmt.quality;
 
+              if (isConvertingThis) {
+                return (
+                  <motion.div
+                    key={fmt.quality}
+                    layout
+                    initial={{ opacity: 0.9, scale: 0.99 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="p-3.5 rounded-xl border bg-zinc-900/95 border-[#ff9000]/60 shadow-lg shadow-black/40 space-y-2.5 transition-all"
+                  >
+                    {/* Top row: Status, Quality & Cancel */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Loader2 className="w-4 h-4 animate-spin text-[#ff9000] shrink-0" />
+                        <span className="font-bold text-white text-sm truncate">
+                          Converting {fmt.quality} to MP4
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs font-bold text-[#ff9000] font-mono">
+                          {conversion.progress}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleCancelConversion}
+                          className="text-zinc-500 hover:text-zinc-200 p-1 rounded hover:bg-zinc-800 transition-colors"
+                          title="Cancel"
+                          aria-label="Cancel conversion"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Progress Track */}
+                    <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+                      <div 
+                        className="h-full bg-[#ff9000] rounded-full transition-all duration-200 ease-out"
+                        style={{ width: `${Math.max(3, conversion.progress)}%` }}
+                      />
+                    </div>
+
+                    {/* Bottom Stats */}
+                    <div className="flex items-center justify-between text-[11px] text-zinc-400 font-mono">
+                      <span>
+                        {conversion.totalBytes > 0 
+                          ? `${(conversion.receivedBytes / (1024 * 1024)).toFixed(1)} MB / ${(conversion.totalBytes / (1024 * 1024)).toFixed(1)} MB`
+                          : 'Buffering stream...'
+                        }
+                      </span>
+                      <span className="text-zinc-500">Pure MP4</span>
+                    </div>
+                  </motion.div>
+                );
+              }
+
+              if (isReadyThis) {
+                return (
+                  <motion.div
+                    key={fmt.quality}
+                    layout
+                    initial={{ opacity: 0.9, scale: 0.99 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="p-3.5 rounded-xl border bg-zinc-900/95 border-emerald-500/50 shadow-lg shadow-black/40 transition-all"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      {/* Left: Quality & Ready Status */}
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+                          <Check className="w-4 h-4 stroke-[2.5]" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white text-sm">
+                              {fmt.quality} MP4 Ready
+                            </span>
+                            {conversion.formattedSize && (
+                              <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                                {conversion.formattedSize}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-zinc-400">
+                            Pure MP4 ready to save to your device
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Right: Actions */}
+                      <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+                        {conversion.blobUrl && (
+                          <a
+                            href={conversion.blobUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="h-8 px-3 rounded-lg text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 flex items-center justify-center gap-1 transition-colors shrink-0"
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                            <span>View</span>
+                          </a>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={handleDownloadSavedFile}
+                          className="h-8 flex-1 sm:flex-initial px-4 rounded-lg text-xs font-bold bg-[#ff9000] hover:bg-[#ffa31a] text-black flex items-center justify-center gap-1.5 transition-colors"
+                        >
+                          <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Download MP4</span>
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              }
+
+              if (isErrorThis) {
+                return (
+                  <motion.div
+                    key={fmt.quality}
+                    layout
+                    className="p-3 rounded-xl border bg-red-950/20 border-red-500/40 flex items-center justify-between gap-3 transition-all"
+                  >
+                    <div className="flex items-center gap-2 text-xs text-red-300 min-w-0">
+                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <span className="truncate">{conversion.errorMessage || 'Conversion failed.'}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleStartConversion(fmt)}
+                      className="text-xs text-white bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-md border border-zinc-700 transition-colors shrink-0 font-medium"
+                    >
+                      Retry
+                    </button>
+                  </motion.div>
+                );
+              }
+
+              // Standard Idle Resolution Row
               return (
                 <div
                   key={fmt.quality}
-                  className={`p-3 rounded-xl border flex items-center justify-between gap-3 transition-colors ${
-                    isReadyThis 
-                      ? 'bg-zinc-900/90 border-emerald-500/40' 
-                      : isConvertingThis
-                        ? 'bg-zinc-900/90 border-[#ff9000]/50'
-                        : 'bg-zinc-900/40 hover:bg-zinc-900/80 border-zinc-800/80'
-                  }`}
+                  className="p-3 rounded-xl border bg-zinc-900/40 hover:bg-zinc-900/80 border-zinc-800/80 flex items-center justify-between gap-3 transition-colors"
                 >
                   {/* Quality Info */}
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                      isReadyThis ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-[#ff9000]'
-                    }`}>
-                      {isReadyThis ? (
-                        <Check className="w-4 h-4 stroke-[2.5]" />
-                      ) : (
-                        <FileVideo className="w-4 h-4" />
-                      )}
+                    <div className="w-8 h-8 rounded-lg bg-zinc-800 text-[#ff9000] flex items-center justify-center shrink-0">
+                      <FileVideo className="w-4 h-4" />
                     </div>
 
                     <div className="flex items-center gap-2 min-w-0">
@@ -545,31 +541,11 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
                     <button
                       type="button"
                       onClick={() => handleStartConversion(fmt)}
-                      disabled={conversion.status === 'converting' && !isConvertingThis}
-                      className={`h-8 min-w-[100px] sm:min-w-[120px] px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 ${
-                        isReadyThis
-                          ? 'bg-emerald-500 hover:bg-emerald-400 text-black'
-                          : isConvertingThis
-                            ? 'bg-zinc-800 text-zinc-300'
-                            : 'bg-[#ff9000] hover:bg-[#ffa31a] text-black'
-                      }`}
+                      disabled={conversion.status === 'converting'}
+                      className="h-8 min-w-[100px] sm:min-w-[110px] px-3 rounded-lg text-xs font-bold bg-[#ff9000] hover:bg-[#ffa31a] text-black flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40"
                     >
-                      {isConvertingThis ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                          <span>{conversion.progress}%</span>
-                        </>
-                      ) : isReadyThis ? (
-                        <>
-                          <Download className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
-                          <span>Save</span>
-                        </>
-                      ) : (
-                        <>
-                          <Download className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
-                          <span>Download</span>
-                        </>
-                      )}
+                      <Download className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
+                      <span>Download</span>
                     </button>
                   </div>
                 </div>
