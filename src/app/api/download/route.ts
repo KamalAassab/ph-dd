@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateAndSanitizeUrl } from '@/lib/security';
 import { extractFromPage, resolveDirectMp4Url } from '@/lib/extractor';
-import { spawn } from 'child_process';
+import { execFile } from 'child_process';
+import util from 'util';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+
+const execFileAsync = util.promisify(execFile);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function getYtDlpPath(): string | null {
-  // 1. Check local project bin directory
   const localBin = path.resolve(process.cwd(), 'bin', 'yt-dlp.exe');
   if (fs.existsSync(localBin)) return localBin;
 
   const localLinuxBin = path.resolve(process.cwd(), 'bin', 'yt-dlp');
   if (fs.existsSync(localLinuxBin)) return localLinuxBin;
 
-  // 2. Check scoop shim location
   const scoopBin = 'C:\\Users\\4B\\scoop\\shims\\yt-dlp.exe';
   if (fs.existsSync(scoopBin)) return scoopBin;
 
@@ -29,6 +31,14 @@ function getFfmpegDir(): string {
     return scoopFfmpeg;
   }
   return '';
+}
+
+function getCacheDir(): string {
+  const dir = path.join(os.tmpdir(), 'ph_video_cache');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -55,104 +65,118 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const qualityHeight = parseInt(cleanQuality.replace(/\D/g, ''), 10) || 720;
   const maxHeight = Math.min(qualityHeight, 720);
 
-  const videoPageUrl = `https://www.pornhub.com/view_video.php?viewkey=${validation.viewkey}`;
   const ytDlpExecutable = getYtDlpPath();
 
-  // Mode A: Native yt-dlp Engine (High-speed multi-threaded fragment stitching)
+  // Mode A: Native yt-dlp Cache Pipeline (Provides 100% exact Content-Length, progress bar & IDM resume support)
   if (ytDlpExecutable) {
-    const formatSelector = `bestvideo[height<=${maxHeight}]+bestaudio/best[height<=${maxHeight}]/best`;
-    const ffmpegDir = getFfmpegDir();
-
-    const spawnArgs = [
-      '-f', formatSelector,
-      videoPageUrl,
-      '-o', '-',
-      '-N', '16',
-      '--buffer-size', '16M',
-      '--no-warnings',
-      '--no-check-certificates',
-    ];
-
-    if (ffmpegDir) {
-      spawnArgs.push('--ffmpeg-location', ffmpegDir);
-    }
+    const cacheDir = getCacheDir();
+    const cachedFilePath = path.join(cacheDir, `${validation.viewkey}_${maxHeight}p.mp4`);
 
     try {
-      const child = spawn(ytDlpExecutable, spawnArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      // If not yet downloaded or file size is 0, download with multi-threaded yt-dlp to temp file
+      if (!fs.existsSync(cachedFilePath) || fs.statSync(cachedFilePath).size < 1000) {
+        const formatSelector = `bestvideo[height<=${maxHeight}]+bestaudio/best[height<=${maxHeight}]/best`;
+        const videoPageUrl = `https://www.pornhub.com/view_video.php?viewkey=${validation.viewkey}`;
+        const ffmpegDir = getFfmpegDir();
 
-      let isTerminated = false;
+        const spawnArgs = [
+          '-f', formatSelector,
+          videoPageUrl,
+          '-N', '16',
+          '-o', cachedFilePath,
+          '--no-warnings',
+          '--no-check-certificates',
+        ];
 
-      const cleanup = () => {
-        if (isTerminated) return;
-        isTerminated = true;
-        try {
-          child.stdout.removeAllListeners('data');
-          child.stdout.removeAllListeners('end');
-          child.stdout.removeAllListeners('error');
-          child.stdout.pause();
-          child.kill();
-        } catch {}
-      };
+        if (ffmpegDir) {
+          spawnArgs.push('--ffmpeg-location', ffmpegDir);
+        }
 
-      req.signal.addEventListener('abort', cleanup);
+        await execFileAsync(ytDlpExecutable, spawnArgs, { timeout: 120000 });
+      }
 
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          child.stdout.on('data', (chunk: Buffer) => {
-            if (isTerminated) return;
-            try {
+      if (fs.existsSync(cachedFilePath)) {
+        const stat = fs.statSync(cachedFilePath);
+        const totalSize = stat.size;
+
+        // Parse Range request (e.g. from IDM or browser resume)
+        const rangeHeader = req.headers.get('range');
+
+        if (rangeHeader) {
+          const parts = rangeHeader.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10) || 0;
+          const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+          const chunkSize = end - start + 1;
+
+          const fileStream = fs.createReadStream(cachedFilePath, { start, end });
+          const webStream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              fileStream.on('data', (chunk: Buffer) => {
+                controller.enqueue(new Uint8Array(chunk));
+              });
+              fileStream.on('end', () => {
+                controller.close();
+              });
+              fileStream.on('error', (err) => {
+                controller.error(err);
+              });
+            },
+            cancel() {
+              fileStream.destroy();
+            },
+          });
+
+          const headers = new Headers();
+          headers.set('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+          headers.set('Accept-Ranges', 'bytes');
+          headers.set('Content-Length', chunkSize.toString());
+          headers.set('Content-Type', 'video/mp4');
+          headers.set('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+          headers.set('Cache-Control', 'public, max-age=86400');
+
+          return new NextResponse(webStream, {
+            status: 206,
+            headers,
+          });
+        }
+
+        // Full file download with exact Content-Length
+        const fileStream = fs.createReadStream(cachedFilePath);
+        const webStream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            fileStream.on('data', (chunk: Buffer) => {
               controller.enqueue(new Uint8Array(chunk));
-            } catch {
-              cleanup();
-            }
-          });
-
-          child.stdout.on('end', () => {
-            if (isTerminated) return;
-            isTerminated = true;
-            try {
+            });
+            fileStream.on('end', () => {
               controller.close();
-            } catch {}
-            cleanup();
-          });
+            });
+            fileStream.on('error', (err) => {
+              controller.error(err);
+            });
+          },
+          cancel() {
+            fileStream.destroy();
+          },
+        });
 
-          child.stdout.on('error', () => {
-            if (isTerminated) return;
-            isTerminated = true;
-            try {
-              controller.close();
-            } catch {}
-            cleanup();
-          });
+        const headers = new Headers();
+        headers.set('Content-Length', totalSize.toString());
+        headers.set('Content-Type', 'video/mp4');
+        headers.set('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        headers.set('Accept-Ranges', 'bytes');
+        headers.set('Cache-Control', 'public, max-age=86400');
 
-          child.on('error', () => {
-            cleanup();
-          });
-
-          child.on('close', () => {
-            cleanup();
-          });
-        },
-        cancel() {
-          cleanup();
-        },
-      });
-
-      const headers = new Headers();
-      headers.set('Content-Type', 'video/mp4');
-      headers.set('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
-      headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-
-      return new NextResponse(stream, {
-        status: 200,
-        headers,
-      });
-    } catch {
-      // Fallback to direct stream proxy if spawn fails
+        return new NextResponse(webStream, {
+          status: 200,
+          headers,
+        });
+      }
+    } catch (err) {
+      console.error('yt-dlp exact-size cache error, falling back to proxy stream:', err);
     }
   }
 
-  // Mode B: Serverless / Cloud Proxy Engine (Pure fetch & pipe without native binaries)
+  // Mode B: Serverless / Cloud Proxy Engine (Pure fetch proxy for Vercel)
   try {
     const videoData = await extractFromPage(validation.viewkey);
     if (!videoData || videoData.formats.length === 0) {
@@ -185,6 +209,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     headers.set('Content-Type', 'video/mp4');
     headers.set('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
     headers.set('Cache-Control', 'public, max-age=3600');
+    headers.set('Accept-Ranges', 'bytes');
 
     const contentLength = upstreamRes.headers.get('content-length');
     if (contentLength) {
