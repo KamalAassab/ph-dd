@@ -50,7 +50,7 @@ export function cleanTitle(rawTitle: string): string {
 /**
  * Helper to format bytes to human readable format (MB or GB)
  */
-function formatSizeString(bytes: number): string {
+export function formatSizeString(bytes: number): string {
   if (!bytes || bytes <= 0) return '';
   const mb = bytes / (1024 * 1024);
   if (mb >= 1024) {
@@ -129,6 +129,8 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
               return (b.tbr || 0) - (a.tbr || 0);
             });
 
+          let bestDirectCdnUrl = '';
+
           for (const f of sortedRaw) {
             const h = f.height || 0;
             if (h === 0) continue;
@@ -139,6 +141,10 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
 
             let url = f.url;
             if (!url || typeof url !== 'string') continue;
+
+            if (!bestDirectCdnUrl && !f.protocol?.includes('m3u8')) {
+              bestDirectCdnUrl = url;
+            }
 
             const resolution = f.resolution || (f.width && f.height ? `${f.width}x${f.height}` : undefined);
 
@@ -169,19 +175,23 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
             });
           }
 
-          // Ensure standard converted tiers are available
+          if (!bestDirectCdnUrl && formats.length > 0) {
+            bestDirectCdnUrl = formats[0].url;
+          }
+
+          // Ensure standard tiers have a real media stream URL (never an HTML page!)
           const standardTiers = [
             { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 950 },
             { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 550 },
           ];
 
           for (const tier of standardTiers) {
-            if (!seenQualities.has(tier.q)) {
+            if (!seenQualities.has(tier.q) && bestDirectCdnUrl) {
               seenQualities.add(tier.q);
               const bytes = Math.round((tier.estimatedKbps * 1000 / 8) * durationSeconds);
               formats.push({
                 quality: tier.q,
-                url: targetUrl,
+                url: bestDirectCdnUrl,
                 ext: 'mp4',
                 label: tier.label,
                 formattedSize: formatSizeString(bytes),
@@ -307,15 +317,66 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
         }
       }
 
-      // 2. Parse Duration
-      let durationSeconds = 600;
-      const durationMatch = html.match(/"video_duration"\s*:\s*"?(\d+)"?/i) || html.match(/video_duration\s*:\s*"?(\d+)"?/i);
-      if (durationMatch) {
-        durationSeconds = parseInt(durationMatch[1], 10) || 600;
+      // 2. Comprehensive Duration Parsing (seconds, ISO 8601, desktop fallback)
+      let durationSeconds = 0;
+      const durMatch = html.match(/"video_duration"\s*:\s*"?(\d+)"?/i) || html.match(/"duration"\s*:\s*"?(\d+)"?/i);
+      if (durMatch && parseInt(durMatch[1], 10) > 0) {
+        durationSeconds = parseInt(durMatch[1], 10);
       }
-      const mins = Math.floor(durationSeconds / 60);
-      const secs = durationSeconds % 60;
-      const duration = `${mins}:${secs.toString().padStart(2, '0')}`;
+
+      if (!durationSeconds) {
+        const isoMatch = html.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i);
+        if (isoMatch) {
+          const hours = parseInt(isoMatch[1] || '0', 10);
+          const minutes = parseInt(isoMatch[2] || '0', 10);
+          const seconds = parseInt(isoMatch[3] || '0', 10);
+          durationSeconds = hours * 3600 + minutes * 60 + seconds;
+        }
+      }
+
+      if (!durationSeconds) {
+        try {
+          const pageRes = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+              'Cookie': 'age_verified=1; platform=pc;',
+              'Referer': 'https://www.google.com/',
+            },
+            signal: AbortSignal.timeout(3500),
+          });
+          if (pageRes.ok) {
+            const pageHtml = await pageRes.text();
+            const pDurMatch = pageHtml.match(/"duration"\s*:\s*"?(\d+)"?/i) || pageHtml.match(/"video_duration"\s*:\s*"?(\d+)"?/i);
+            if (pDurMatch && parseInt(pDurMatch[1], 10) > 0) {
+              durationSeconds = parseInt(pDurMatch[1], 10);
+            }
+            if (!durationSeconds) {
+              const pIsoMatch = pageHtml.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i);
+              if (pIsoMatch) {
+                const hours = parseInt(pIsoMatch[1] || '0', 10);
+                const minutes = parseInt(pIsoMatch[2] || '0', 10);
+                const seconds = parseInt(pIsoMatch[3] || '0', 10);
+                durationSeconds = hours * 3600 + minutes * 60 + seconds;
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      let duration = '';
+      if (durationSeconds > 0) {
+        const h = Math.floor(durationSeconds / 3600);
+        const m = Math.floor((durationSeconds % 3600) / 60);
+        const s = durationSeconds % 60;
+        duration = h > 0 
+          ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+          : `${m}:${s.toString().padStart(2, '0')}`;
+      } else {
+        durationSeconds = 600;
+        duration = '10:00';
+      }
 
       // 3. Parse Author
       let author = 'Creator';
@@ -331,11 +392,20 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
       // 4. Parse Thumbnail
       let thumbnail = '';
       const posterMatch = html.match(/"image_url":\s*"(.*?)"/i) || html.match(/"poster":\s*"(.*?)"/i);
-      if (posterMatch) thumbnail = posterMatch[1].replace(/\\\//g, '/');
+      if (posterMatch && posterMatch[1]) {
+        thumbnail = posterMatch[1].replace(/\\\//g, '/');
+      }
+      if (!thumbnail) {
+        const phnImg = html.match(/https?:\\\/\\\/[^"]*phncdn[^"]*(?:\.jpg|\.webp|\.png)[^"]*/i);
+        if (phnImg) {
+          thumbnail = phnImg[0].replace(/\\\//g, '/');
+        }
+      }
 
       // 5. Parse and resolve get_media streams
       const formats: VideoFormat[] = [];
       const seenQualities = new Set<string>();
+      let bestDirectCdnUrl = '';
 
       const getMediaMatches = Array.from(html.matchAll(/"videoUrl"\s*:\s*"(https?:\\\/\\\/[^"]+get_media[^"]*)"/gi));
       for (const m of getMediaMatches) {
@@ -360,7 +430,11 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
                 seenQualities.add(q);
 
                 const directUrl = (item.videoUrl || '').replace(/\\\//g, '/');
-                if (!directUrl) continue;
+                if (!directUrl || !directUrl.startsWith('http')) continue;
+
+                if (!bestDirectCdnUrl) {
+                  bestDirectCdnUrl = directUrl;
+                }
 
                 const estimatedKbps = h >= 1080 ? 4500 : h >= 720 ? 2500 : h >= 480 ? 1200 : 500;
                 const bytes = Math.round((estimatedKbps * 1000 / 8) * durationSeconds);
@@ -382,33 +456,34 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
         }
       }
 
-      // Ensure converted tiers exist
-      const standardTiers = [
-        { q: '720p', height: 720, label: '720p (Original HD)', estimatedKbps: 2500 },
-        { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 950 },
-        { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 550 },
-      ];
+      // If get_media gave direct stream, use it for standard tiers
+      if (bestDirectCdnUrl) {
+        const standardTiers = [
+          { q: '720p', height: 720, label: '720p (Original HD)', estimatedKbps: 2500 },
+          { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 950 },
+          { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 550 },
+        ];
 
-      for (const tier of standardTiers) {
-        if (!seenQualities.has(tier.q)) {
-          seenQualities.add(tier.q);
-          const bytes = Math.round((tier.estimatedKbps * 1000 / 8) * durationSeconds);
-          const fallbackUrl = formats[0]?.url || targetUrl;
+        for (const tier of standardTiers) {
+          if (!seenQualities.has(tier.q)) {
+            seenQualities.add(tier.q);
+            const bytes = Math.round((tier.estimatedKbps * 1000 / 8) * durationSeconds);
 
-          formats.push({
-            quality: tier.q,
-            url: fallbackUrl,
-            ext: 'mp4',
-            label: tier.label,
-            formattedSize: formatSizeString(bytes),
-            isHls: false,
-          });
+            formats.push({
+              quality: tier.q,
+              url: bestDirectCdnUrl,
+              ext: 'mp4',
+              label: tier.label,
+              formattedSize: formatSizeString(bytes),
+              isHls: false,
+            });
+          }
         }
       }
 
       formats.sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
 
-      if (formats.length > 0 || title) {
+      if (formats.length > 0) {
         return {
           id: viewkey,
           title: title || `Video ${viewkey}`,

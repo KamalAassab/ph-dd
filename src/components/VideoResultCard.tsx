@@ -59,9 +59,7 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
       .replace(/[\\/:*?"<>|]/g, '')
       .trim() || 'video';
 
-    // IMPORTANT: Never pass the pre-extracted CDN streamUrl — it expires within minutes.
-    // The download API will always re-extract a fresh signed URL at request time.
-    const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(cleanExactTitle)}`;
+    const downloadApiUrl = `/api/download?viewkey=${encodeURIComponent(data.id)}&url=${encodeURIComponent(data.sourceUrl)}&streamUrl=${encodeURIComponent(format.url)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(cleanExactTitle)}`;
 
     // Dispatch native browser / IDM download
     window.location.assign(downloadApiUrl);
@@ -83,7 +81,11 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
       clearTimeout(step2);
       clearTimeout(step3);
     };
-  }, [data.sourceUrl, data.title, onShowToast]);
+  }, [data.id, data.sourceUrl, data.title, onShowToast]);
+
+  const thumbnailSrc = data.thumbnail
+    ? `/api/thumbnail?url=${encodeURIComponent(data.thumbnail)}&viewkey=${encodeURIComponent(data.id)}`
+    : `/api/thumbnail?viewkey=${encodeURIComponent(data.id)}`;
 
   return (
     <motion.div 
@@ -118,12 +120,13 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
           
           {/* Thumbnail Container */}
           <div className="md:col-span-5 relative aspect-video rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 group shadow-lg">
-            {data.id ? (
-              // Thumbnail served through our proxy to avoid CDN expiry / CORS on iOS
+            {data.id || data.thumbnail ? (
+              // Thumbnail served through our proxy to avoid CDN expiry / CORS / 403 on iOS
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`/api/thumbnail?viewkey=${encodeURIComponent(data.id)}`}
+                src={thumbnailSrc}
                 alt={data.title}
+                referrerPolicy="no-referrer"
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
                 onError={(e) => {
                   (e.target as HTMLElement).style.display = 'none';

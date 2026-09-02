@@ -21,15 +21,13 @@ function getCacheDir(): string {
 }
 
 /**
- * Re-fetch a fresh signed CDN URL at download time by re-running the
- * embed + get_media pipeline. CDN tokens expire in minutes, so we NEVER
- * use the URL extracted during the /api/extract call.
+ * Re-fetch a fresh signed CDN URL at download time by querying the embed + get_media endpoints.
  */
 async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promise<string> {
   const embedUrl = `https://www.pornhub.com/embed/${encodeURIComponent(viewkey)}`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 7000);
 
   try {
     const response = await fetch(embedUrl, {
@@ -47,9 +45,7 @@ async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promis
     if (!response.ok) return '';
     const html = await response.text();
 
-    // Collect all get_media endpoints and resolve them to actual CDN MP4s
     const getMediaMatches = Array.from(html.matchAll(/"videoUrl"\s*:\s*"(https?:\\\/\\\/[^"]+get_media[^"]*)"/gi));
-    
     const allStreams: Array<{ height: number; url: string }> = [];
 
     for (const m of getMediaMatches) {
@@ -66,8 +62,10 @@ async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promis
           const items = await mediaRes.json();
           if (Array.isArray(items)) {
             for (const item of items) {
-              if (item.videoUrl && item.height) {
-                allStreams.push({ height: item.height, url: item.videoUrl.replace(/\\\//g, '/') });
+              const directUrl = (item.videoUrl || '').replace(/\\\//g, '/');
+              const h = item.height || parseInt(item.quality, 10) || 480;
+              if (directUrl && directUrl.startsWith('http') && !directUrl.includes('view_video.php')) {
+                allStreams.push({ height: h, url: directUrl });
               }
             }
           }
@@ -79,20 +77,15 @@ async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promis
 
     if (allStreams.length === 0) return '';
 
-    // Sort by height descending and find closest match
     allStreams.sort((a, b) => b.height - a.height);
 
-    // Find best match for requested quality
-    const exact = allStreams.find(s => s.height === qualityHeight);
+    const exact = allStreams.find((s) => s.height === qualityHeight);
     if (exact) return exact.url;
 
-    // If requesting a lower quality (420p/360p), use best available (will be transcoded server-side)
-    const lowerOrEqual = allStreams.filter(s => s.height <= qualityHeight);
+    const lowerOrEqual = allStreams.filter((s) => s.height <= qualityHeight);
     if (lowerOrEqual.length > 0) return lowerOrEqual[0].url;
 
-    // Fallback: return best available
     return allStreams[0].url;
-
   } catch {
     clearTimeout(timeoutId);
     return '';
@@ -101,24 +94,32 @@ async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promis
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(req.url);
+  const rawViewkey = searchParams.get('viewkey') || '';
   const rawUrl = searchParams.get('url') || '';
+  const rawStreamUrl = searchParams.get('streamUrl') || '';
   const rawQuality = searchParams.get('quality') || '720p';
   const rawTitle = searchParams.get('title') || '';
 
-  // 1. Validate URL & extract viewkey
-  const validation = validateAndSanitizeUrl(rawUrl);
-  if (!validation.isValid || !validation.viewkey) {
-    return new NextResponse('Invalid or unauthorized video URL provided.', { status: 400 });
+  // 1. Resolve viewkey from viewkey param or URL validation
+  let viewkey = rawViewkey;
+  if (!viewkey || !/^[a-zA-Z0-9_-]{5,64}$/.test(viewkey)) {
+    const validation = validateAndSanitizeUrl(rawUrl || rawStreamUrl);
+    if (validation.isValid && validation.viewkey) {
+      viewkey = validation.viewkey;
+    }
   }
 
-  const viewkey = validation.viewkey;
+  if (!viewkey) {
+    return new NextResponse('Invalid or unauthorized video URL / viewkey provided.', { status: 400 });
+  }
+
   const cleanQuality = rawQuality.toLowerCase().includes('p') ? rawQuality : `${rawQuality}p`;
   const qualityHeight = parseInt(cleanQuality.replace(/\D/g, ''), 10) || 720;
   const videoTitle = rawTitle && rawTitle !== 'video' ? rawTitle : 'video';
 
   const ytDlpExecutable = getYtDlpPath();
 
-  // ─── Mode A: yt-dlp (local / dedicated server with binary) ───────────────
+  // ─── Mode A: Local / Dedicated Server (yt-dlp multi-part cache engine) ───
   if (ytDlpExecutable) {
     const cacheDir = getCacheDir();
     const cachedFilePath = path.join(cacheDir, `${viewkey}_${qualityHeight}p.mp4`);
@@ -186,7 +187,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           headers.set('Content-Length', chunkSize.toString());
           headers.set('Content-Type', 'video/mp4');
           headers.set('Content-Disposition', `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
-          headers.set('Cache-Control', 'no-cache');
+          headers.set('Cache-Control', 'public, max-age=86400');
 
           return new NextResponse(webStream, { status: 206, headers });
         }
@@ -208,7 +209,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         headers.set('Content-Type', 'video/mp4');
         headers.set('Content-Disposition', `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
         headers.set('Accept-Ranges', 'bytes');
-        headers.set('Cache-Control', 'no-cache');
+        headers.set('Cache-Control', 'public, max-age=86400');
 
         return new NextResponse(webStream, { status: 200, headers });
       }
@@ -217,69 +218,86 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // ─── Mode B: Cloud/Serverless — Always re-extract a fresh signed URL ─────
-  // CRITICAL: Never use the URL from extraction time. CDN tokens expire in minutes.
-  // We always re-run the embed + get_media pipeline at download time.
+  // ─── Mode B: Cloud / Serverless Streaming Proxy (100% cloud-compatible) ───
   try {
-    const freshUrl = await getFreshStreamUrl(viewkey, qualityHeight);
+    let targetStreamUrl = '';
 
-    if (!freshUrl) {
-      // Last resort: try full re-extraction
+    // Step 1: If client passed an existing direct CDN URL that is valid, use it
+    if (
+      rawStreamUrl &&
+      rawStreamUrl.startsWith('http') &&
+      !rawStreamUrl.includes('view_video.php') &&
+      (rawStreamUrl.includes('phncdn.com') || rawStreamUrl.includes('/video/'))
+    ) {
+      targetStreamUrl = rawStreamUrl;
+    }
+
+    // Step 2: If no direct CDN URL, fetch fresh signed stream URL from embed
+    if (!targetStreamUrl) {
+      targetStreamUrl = await getFreshStreamUrl(viewkey, qualityHeight);
+    }
+
+    // Step 3: If still empty, fall back to extractFromPage
+    if (!targetStreamUrl) {
       const videoData = await extractFromPage(viewkey);
-      if (!videoData || videoData.formats.length === 0) {
-        return new NextResponse('Video stream could not be found or has expired. Please try again.', { status: 404 });
-      }
-      const format = videoData.formats.find(f => f.quality === cleanQuality) || videoData.formats[0];
-      if (!format?.url) {
-        return new NextResponse('No valid stream format found.', { status: 404 });
+      if (videoData && videoData.formats.length > 0) {
+        const matchingFmt = videoData.formats.find((f) => f.quality === cleanQuality) || videoData.formats[0];
+        if (matchingFmt && matchingFmt.url && !matchingFmt.url.includes('view_video.php')) {
+          targetStreamUrl = matchingFmt.url;
+        }
       }
     }
 
-    if (!freshUrl) {
-      return new NextResponse('Could not resolve a valid video stream. Please retry.', { status: 502 });
+    // Final verification: ensure we NEVER proxy an HTML webpage as an MP4!
+    if (!targetStreamUrl || !targetStreamUrl.startsWith('http') || targetStreamUrl.includes('view_video.php')) {
+      return new NextResponse('Could not resolve a valid video stream for this video. Please retry.', { status: 502 });
     }
 
     const exactTitle = videoTitle.replace(/[\\/:*?"<>|]/g, '').trim() || 'video';
     const filename = `${exactTitle}.mp4`;
     const asciiFilename = (exactTitle.replace(/[^\x20-\x7E]/g, '').trim() || 'video') + '.mp4';
 
+    // Forward range header (required for Safari iOS "View" probe & video playback)
     const clientRange = req.headers.get('range');
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       'Referer': 'https://www.pornhub.com/',
       'Accept': '*/*',
-      'Accept-Encoding': 'identity',
     };
     if (clientRange) {
       upstreamHeaders['Range'] = clientRange;
     }
 
-    const upstreamRes = await fetch(freshUrl, { headers: upstreamHeaders });
+    const upstreamRes = await fetch(targetStreamUrl, {
+      headers: upstreamHeaders,
+    });
 
     if (!upstreamRes.ok || !upstreamRes.body) {
-      console.error('[download] upstream CDN failed:', upstreamRes.status, freshUrl.substring(0, 60));
-      return new NextResponse(`Upstream video CDN returned ${upstreamRes.status}. The link may have expired — please retry.`, { status: 502 });
+      return new NextResponse(`Upstream media server returned HTTP ${upstreamRes.status}. Please refresh and retry.`, { status: 502 });
     }
 
     const headers = new Headers();
     headers.set('Content-Type', 'video/mp4');
     headers.set('Content-Disposition', `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
-    headers.set('Cache-Control', 'no-cache, no-store');
     headers.set('Accept-Ranges', 'bytes');
+    headers.set('Cache-Control', 'no-cache, no-store');
 
     const contentLength = upstreamRes.headers.get('content-length');
-    if (contentLength) headers.set('Content-Length', contentLength);
+    if (contentLength) {
+      headers.set('Content-Length', contentLength);
+    }
 
     const contentRange = upstreamRes.headers.get('content-range');
-    if (contentRange) headers.set('Content-Range', contentRange);
+    if (contentRange) {
+      headers.set('Content-Range', contentRange);
+    }
 
     return new NextResponse(upstreamRes.body as unknown as ReadableStream, {
       status: upstreamRes.status === 206 ? 206 : 200,
       headers,
     });
-
   } catch (err) {
-    console.error('[download] proxy streaming error:', err);
-    return new NextResponse('Error generating video download stream.', { status: 500 });
+    console.error('[download] proxy error:', err);
+    return new NextResponse('An error occurred while generating the video download stream.', { status: 500 });
   }
 }
