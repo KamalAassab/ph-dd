@@ -119,7 +119,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const qualityHeight = parseInt(cleanQuality.replace(/\D/g, ''), 10) || 720;
   const videoTitle = rawTitle && rawTitle !== 'video' ? rawTitle : 'video';
 
-  const ytDlpExecutable = getYtDlpPath();
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const ytDlpExecutable = !isServerless ? getYtDlpPath() : null;
 
   // ─── Mode A: Local / Dedicated Server (yt-dlp multi-part cache engine) ───
   if (ytDlpExecutable) {

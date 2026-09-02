@@ -283,8 +283,34 @@ export async function extractFromPage(viewkey: string): Promise<VideoMetadata | 
   }
 
   const targetUrl = `https://www.pornhub.com/view_video.php?viewkey=${encodeURIComponent(viewkey)}`;
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-  // 1. First attempt: If yt-dlp is available (Windows local or Linux Vercel), extract with yt-dlp
+  // On Serverless (Vercel): Pure HTTP embed extraction is ultra-fast (300ms) and never hits cold-start timeouts
+  if (isServerless) {
+    const scraperResult = await extractFromEmbedFallback(viewkey, targetUrl);
+    if (scraperResult && scraperResult.formats.length > 0) {
+      metadataCache.set(viewkey, { data: scraperResult, expiresAt: Date.now() + 3600 * 1000 });
+      return scraperResult;
+    }
+
+    // Secondary fallback: yt-dlp binary if available
+    const ytDlpPath = getYtDlpPath();
+    if (ytDlpPath) {
+      try {
+        const ytDlpResult = await extractWithYtDlp(targetUrl, viewkey);
+        if (ytDlpResult && ytDlpResult.formats.length > 0) {
+          metadataCache.set(viewkey, { data: ytDlpResult, expiresAt: Date.now() + 3600 * 1000 });
+          return ytDlpResult;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return null;
+  }
+
+  // 1. Local Node environment: If yt-dlp is available, extract with yt-dlp
   const ytDlpPath = getYtDlpPath();
   if (ytDlpPath) {
     try {
