@@ -22,10 +22,21 @@ function getCacheDir(): string {
   return dir;
 }
 
+// In-memory stream URL cache per warm serverless container (valid for 90 minutes)
+const streamUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
 /**
  * Re-fetch a fresh signed CDN URL at download time by querying the embed + get_media endpoints.
  */
-async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promise<string> {
+async function getFreshStreamUrl(viewkey: string, qualityHeight: number, forceRefresh = false): Promise<string> {
+  const cacheKey = `${viewkey}_${qualityHeight}`;
+  if (!forceRefresh) {
+    const cached = streamUrlCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.url;
+    }
+  }
+
   const embedUrl = `https://www.pornhub.com/embed/${encodeURIComponent(viewkey)}`;
 
   const controller = new AbortController();
@@ -84,12 +95,17 @@ async function getFreshStreamUrl(viewkey: string, qualityHeight: number): Promis
     allStreams.sort((a, b) => b.height - a.height);
 
     const exact = allStreams.find((s) => s.height === qualityHeight);
-    if (exact) return exact.url;
-
     const lowerOrEqual = allStreams.filter((s) => s.height <= qualityHeight);
-    if (lowerOrEqual.length > 0) return lowerOrEqual[0].url;
+    const selectedUrl = exact ? exact.url : lowerOrEqual.length > 0 ? lowerOrEqual[0].url : allStreams[0].url;
 
-    return allStreams[0].url;
+    if (selectedUrl) {
+      streamUrlCache.set(cacheKey, {
+        url: selectedUrl,
+        expiresAt: Date.now() + 1000 * 60 * 90, // 90 mins
+      });
+    }
+
+    return selectedUrl;
   } catch {
     clearTimeout(timeoutId);
     return '';
@@ -297,9 +313,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       headers: upstreamHeaders,
     });
 
-    // If HTTP 474 (IP mismatch) or 403, immediately re-request fresh URL from current IP and retry once!
+    // If HTTP 474 (IP mismatch) or 403, invalidate cache and force re-request fresh URL from current IP!
     if (upstreamRes.status === 474 || upstreamRes.status === 403) {
-      const freshRetryUrl = await getFreshStreamUrl(viewkey, qualityHeight);
+      streamUrlCache.delete(`${viewkey}_${qualityHeight}`);
+      const freshRetryUrl = await getFreshStreamUrl(viewkey, qualityHeight, true);
       if (freshRetryUrl && freshRetryUrl !== targetStreamUrl) {
         targetStreamUrl = freshRetryUrl;
         upstreamRes = await fetch(targetStreamUrl, {
