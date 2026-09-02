@@ -53,11 +53,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         const videoPageUrl = `https://www.pornhub.com/view_video.php?viewkey=${validation.viewkey}`;
         const ffmpegDir = getFfmpegDir();
 
+        const isOriginal = qualityHeight >= 720;
+        const ffmpegPostArgs = isOriginal
+          ? 'ffmpeg:-movflags +faststart'
+          : `ffmpeg:-vf scale=-2:${qualityHeight} -c:v libx264 -preset ultrafast -crf 24 -c:a copy -movflags +faststart`;
+
         const spawnArgs = [
-          '-f', `bestvideo[height<=${qualityHeight}]+bestaudio/best[height<=${qualityHeight}]/best`,
+          '-f', isOriginal ? `bestvideo[height<=${qualityHeight}]+bestaudio/best[height<=${qualityHeight}]/best` : 'bestvideo+bestaudio/best',
           videoPageUrl,
           '-N', '16',
-          '--postprocessor-args', 'ffmpeg:-movflags +faststart',
+          '--postprocessor-args', ffmpegPostArgs,
           '-o', cachedFilePath,
           '--no-warnings',
           '--no-check-certificates',

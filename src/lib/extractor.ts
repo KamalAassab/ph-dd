@@ -156,21 +156,29 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
             });
           }
 
-          // Fallback if no height was parsed: ensure standard options
-          if (formats.length === 0) {
-            for (const q of ['720p', '480p', '240p']) {
+          // Ensure 360p, 420p, 720p are always available options
+          const standardTiers = [
+            { q: '720p', height: 720, label: '720p (Original HD)', estimatedKbps: 1750 },
+            { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 850 },
+            { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 500 },
+          ];
+
+          for (const tier of standardTiers) {
+            if (!seenQualities.has(tier.q)) {
+              seenQualities.add(tier.q);
+              const bytes = Math.round((tier.estimatedKbps * 1000 / 8) * durationSeconds);
               formats.push({
-                quality: q,
+                quality: tier.q,
                 url: targetUrl,
                 ext: 'mp4',
-                label: `${q} Full Video`,
-                formattedSize: q === '720p' ? '~120 MB' : q === '480p' ? '~65 MB' : '~30 MB',
+                label: tier.label,
+                formattedSize: `${(bytes / 1024 / 1024).toFixed(1)} MB`,
                 isHls: false,
               });
             }
           }
 
-          // Final sort: 1080p > 720p > 480p > 360p > 240p
+          // Final sort: 1080p > 720p > 480p > 420p > 360p > 240p
           formats.sort((a, b) => {
             const qA = parseInt(a.quality.replace(/\D/g, ''), 10) || 0;
             const qB = parseInt(b.quality.replace(/\D/g, ''), 10) || 0;
