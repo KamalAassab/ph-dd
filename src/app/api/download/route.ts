@@ -122,7 +122,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const ytDlpExecutable = getYtDlpPath();
 
   // ─── Mode A: Local / Dedicated Server (yt-dlp multi-part cache engine) ───
-  if (ytDlpExecutable) {
+  // CRITICAL: On Vercel Free Serverless (process.env.VERCEL === '1'), NEVER run yt-dlp CLI to write to disk
+  // because Vercel has a strict 10s function timeout limit. Always use Mode B (Instant Streaming Proxy).
+  const isVercelServerless = Boolean(process.env.VERCEL);
+  if (ytDlpExecutable && !isVercelServerless) {
     const cacheDir = getCacheDir();
     const cachedFilePath = path.join(cacheDir, `${viewkey}_${qualityHeight}p.mp4`);
 

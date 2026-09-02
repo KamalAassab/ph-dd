@@ -148,23 +148,17 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
         const cl = probeRes.headers.get('content-length');
         if (cl && parseInt(cl, 10) > 1) totalSize = parseInt(cl, 10);
       }
+      if (!totalSize && format.formattedSize) {
+        const numMatch = format.formattedSize.match(/([\d.]+)\s*(MB|GB)/i);
+        if (numMatch) {
+          const val = parseFloat(numMatch[1]);
+          const unit = numMatch[2].toUpperCase();
+          totalSize = Math.round(val * (unit === 'GB' ? 1024 * 1024 * 1024 : 1024 * 1024));
+        }
+      }
 
-      // If unable to determine total size or probe returned non-200/206, fallback gracefully
-      if (!totalSize || totalSize < 100_000) {
-        // Direct stream ready fallback
-        setConversion({
-          status: 'ready',
-          quality: format.quality,
-          progress: 100,
-          receivedBytes: totalSize || 1,
-          totalBytes: totalSize || 1,
-          blobUrl: null,
-          directDownloadUrl,
-          filename,
-          formattedSize: format.formattedSize || 'Full Size',
-        });
-        if (onShowToast) onShowToast(`✓ ${format.quality} MP4 stream ready! Click Download below.`, 'success');
-        return;
+      if (!totalSize || totalSize < 50_000) {
+        throw new Error('Unable to resolve stream length. Upstream CDN may be rate-limiting.');
       }
 
       const formattedBytes = (totalSize / (1024 * 1024)).toFixed(1) + ' MB';
@@ -184,16 +178,28 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
         if (abortController.signal.aborted) return;
 
         const endByte = Math.min(currentByte + CHUNK_SIZE - 1, totalSize - 1);
-        const chunkRes = await fetch(directDownloadUrl, {
-          headers: { Range: `bytes=${currentByte}-${endByte}` },
-          signal: abortController.signal,
-        });
+        let chunkBuffer: ArrayBuffer | null = null;
 
-        if (!chunkRes.ok) {
-          throw new Error(`Chunk download failed with status ${chunkRes.status}`);
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const chunkRes = await fetch(directDownloadUrl, {
+              headers: { Range: `bytes=${currentByte}-${endByte}` },
+              signal: abortController.signal,
+            });
+            if (chunkRes.ok) {
+              chunkBuffer = await chunkRes.arrayBuffer();
+              break;
+            }
+          } catch {
+            if (abortController.signal.aborted) return;
+            await new Promise((r) => setTimeout(r, 600));
+          }
         }
 
-        const chunkBuffer = await chunkRes.arrayBuffer();
+        if (!chunkBuffer) {
+          throw new Error(`Failed to buffer chunk at byte ${currentByte}`);
+        }
+
         chunks.push(new Uint8Array(chunkBuffer));
         currentByte += chunkBuffer.byteLength;
 
@@ -224,16 +230,15 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
       if (onShowToast) onShowToast(`✓ ${format.quality} converted to pure MP4! Click to download.`, 'success');
     } catch (err: unknown) {
       if ((err as Error)?.name === 'AbortError') return;
-      console.error('Conversion failed:', err);
-      // Even if chunking failed, offer direct streaming download
+      console.error('Conversion error:', err);
       setConversion((prev) => ({
         ...prev,
-        status: 'ready',
-        progress: 100,
+        status: 'error',
+        progress: 0,
         blobUrl: null,
-        formattedSize: format.formattedSize || 'Full Size',
+        errorMessage: (err as Error)?.message || 'Conversion stream error. Please retry.',
       }));
-      if (onShowToast) onShowToast('Pure MP4 ready for direct download!', 'success');
+      if (onShowToast) onShowToast('Conversion failed. Click retry.', 'error');
     }
   }, [conversion, data.id, data.sourceUrl, cleanExactTitle, onShowToast]);
 
