@@ -7,12 +7,13 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(req.url);
-  const rawUrl = searchParams.get('url') || searchParams.get('streamUrl') || '';
+  const rawUrl = searchParams.get('url') || '';
+  const directStreamUrl = searchParams.get('streamUrl') || '';
   const rawQuality = searchParams.get('quality') || '720p';
   const rawTitle = searchParams.get('title') || '';
 
   // 1. Validate URL & extract viewkey
-  const validation = validateAndSanitizeUrl(rawUrl);
+  const validation = validateAndSanitizeUrl(rawUrl || directStreamUrl);
   if (!validation.isValid || !validation.viewkey) {
     return new NextResponse('Invalid or unauthorized video URL provided.', { status: 400 });
   }
@@ -20,33 +21,40 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const cleanQuality = rawQuality.toLowerCase().includes('p') ? rawQuality : `${rawQuality}p`;
 
   try {
-    // 2. Extract video metadata
-    const videoData = await extractFromPage(validation.viewkey);
-    if (!videoData || videoData.formats.length === 0) {
-      return new NextResponse('Video stream could not be found or has expired.', { status: 404 });
+    let targetStreamUrl = directStreamUrl;
+    let videoTitle = rawTitle;
+
+    // Fast-path: If streamUrl & title are provided by client, skip extraction completely (0ms)
+    if (!targetStreamUrl || !videoTitle) {
+      const videoData = await extractFromPage(validation.viewkey);
+      if (!videoData || videoData.formats.length === 0) {
+        return new NextResponse('Video stream could not be found or has expired.', { status: 404 });
+      }
+      if (!videoTitle) {
+        videoTitle = videoData.title || 'video';
+      }
+      if (!targetStreamUrl) {
+        const chosenFormat = videoData.formats.find(
+          (f) => f.quality.toLowerCase() === cleanQuality.toLowerCase()
+        ) || videoData.formats[0];
+        targetStreamUrl = chosenFormat?.url || '';
+      }
     }
 
-    // Determine exact title: use provided title or extracted exact video title
-    const videoTitle = rawTitle && rawTitle !== 'video' ? rawTitle : (videoData.title || 'video');
+    if (!targetStreamUrl) {
+      return new NextResponse('No valid stream format found.', { status: 404 });
+    }
 
-    // Remove only illegal OS filesystem characters (\ / : * ? " < > |), preserving spaces & exact casing
-    const exactTitle = videoTitle
+    // Clean illegal OS characters while preserving spaces and exact words
+    const exactTitle = (videoTitle || 'video')
       .replace(/[\\/:*?"<>|]/g, '')
       .trim() || 'video';
 
     const filename = `${exactTitle}.mp4`;
     const asciiFilename = (exactTitle.replace(/[^\x20-\x7E]/g, '').trim() || 'video') + '.mp4';
 
-    let chosenFormat = videoData.formats.find(
-      (f) => f.quality.toLowerCase() === cleanQuality.toLowerCase()
-    ) || videoData.formats[0];
-
-    if (!chosenFormat?.url) {
-      return new NextResponse('No valid stream format found.', { status: 404 });
-    }
-
-    // 3. Resolve direct CDN URL
-    const directMp4Url = await resolveDirectMp4Url(chosenFormat.url);
+    // 2. Resolve direct CDN URL (instant 0ms if already resolved)
+    const directMp4Url = await resolveDirectMp4Url(targetStreamUrl);
 
     // Forward range header if present (for IDM / browser resume)
     const clientRange = req.headers.get('range');
@@ -59,7 +67,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       upstreamHeaders['Range'] = clientRange;
     }
 
-    // 4. Stream directly from CDN with exact video title
+    // 3. Stream directly from CDN in milliseconds with zero pipe buffering
     const upstreamRes = await fetch(directMp4Url, {
       headers: upstreamHeaders,
     });

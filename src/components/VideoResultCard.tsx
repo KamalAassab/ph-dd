@@ -56,7 +56,7 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
       .replace(/[\\/:*?"<>|]/g, '')
       .trim() || 'video';
 
-    const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(cleanExactTitle)}`;
+    const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&streamUrl=${encodeURIComponent(format.url)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(cleanExactTitle)}`;
 
     // Dispatch native download
     window.location.assign(downloadApiUrl);
