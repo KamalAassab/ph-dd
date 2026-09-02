@@ -3,33 +3,37 @@ import path from 'path';
 import fs from 'fs';
 import { VideoFormat, VideoMetadata } from './types';
 
-// Strict 720p maximum resolution cap as requested
-const MAX_ALLOWED_HEIGHT = 720;
+// Support full authentic resolutions up to 1080p Full HD
+const MAX_ALLOWED_HEIGHT = 1080;
 
 /**
  * Locate the best available yt-dlp executable on the system.
  */
-function getYtDlpPath(): string {
-  // 1. Check local project bin directory
+export function getYtDlpPath(): string | null {
   const localBin = path.resolve(process.cwd(), 'bin', 'yt-dlp.exe');
-  if (fs.existsSync(localBin)) {
-    return localBin;
-  }
+  if (fs.existsSync(localBin)) return localBin;
 
-  // 2. Check scoop shim location
+  const localLinuxBin = path.resolve(process.cwd(), 'bin', 'yt-dlp');
+  if (fs.existsSync(localLinuxBin)) return localLinuxBin;
+
   const scoopBin = 'C:\\Users\\4B\\scoop\\shims\\yt-dlp.exe';
-  if (fs.existsSync(scoopBin)) {
-    return scoopBin;
-  }
+  if (fs.existsSync(scoopBin)) return scoopBin;
 
-  // 3. Fallback to system PATH
-  return 'yt-dlp';
+  return null;
+}
+
+export function getFfmpegDir(): string {
+  const scoopFfmpeg = 'C:\\Users\\4B\\scoop\\shims';
+  if (fs.existsSync(path.join(scoopFfmpeg, 'ffmpeg.exe'))) {
+    return scoopFfmpeg;
+  }
+  return '';
 }
 
 /**
  * Clean and standardize video title
  */
-function cleanTitle(rawTitle: string): string {
+export function cleanTitle(rawTitle: string): string {
   if (!rawTitle) return 'Untitled Video';
   return rawTitle
     .replace(/&amp;/g, '&')
@@ -71,26 +75,27 @@ export async function resolveDirectMp4Url(url: string): Promise<string> {
 }
 
 /**
- * Extract video metadata using yt-dlp binary with 720p maximum resolution cap.
+ * Extract video metadata using yt-dlp binary with full resolution extraction.
  * Deduplicated strictly to 1 card per distinct resolution level.
  */
 async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<VideoMetadata | null> {
   const ytDlpExecutable = getYtDlpPath();
+  if (!ytDlpExecutable) return null;
 
   return new Promise<VideoMetadata | null>((resolve) => {
     const args = [
-      '-j',
+      '-J',
       '--no-warnings',
       '--no-check-certificates',
       '--no-playlist',
-      '--socket-timeout', '10',
+      '--socket-timeout', '8',
       targetUrl,
     ];
 
     execFile(
       ytDlpExecutable,
       args,
-      { maxBuffer: 15 * 1024 * 1024, timeout: 3000 },
+      { maxBuffer: 25 * 1024 * 1024, timeout: 8000 },
       async (error, stdout) => {
         if (error || !stdout) {
           return resolve(null);
@@ -108,15 +113,13 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
 
           const durationSeconds = raw.duration || 600;
 
-          // 1. Process and deduplicate: strictly 1 card per resolution
+          // Process and deduplicate: strictly 1 card per resolution
           for (const f of sortedRaw) {
             const h = f.height || 0;
-            // Cap at 720p max
             if (h > MAX_ALLOWED_HEIGHT || h === 0) continue;
 
             let quality = `${h}p`;
 
-            // Strictly 1 card per resolution level
             if (seenQualities.has(quality)) continue;
             seenQualities.add(quality);
 
@@ -135,23 +138,25 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
               const bytes = Math.round((f.tbr * 1000 / 8) * durationSeconds);
               formattedSize = `${(bytes / 1024 / 1024).toFixed(1)} MB`;
             } else if (durationSeconds > 0) {
-              const estimatedKbps = h >= 720 ? 1650 : h >= 480 ? 920 : 420;
+              const estimatedKbps = h >= 1080 ? 3200 : h >= 720 ? 1750 : h >= 480 ? 950 : 420;
               const bytes = Math.round((estimatedKbps * 1000 / 8) * durationSeconds);
               formattedSize = `${(bytes / 1024 / 1024).toFixed(1)} MB`;
             }
+
+            const labelSuffix = h >= 1080 ? 'Full HD' : h >= 720 ? 'HD' : h >= 480 ? 'SD' : 'Mobile';
 
             formats.push({
               quality,
               resolution,
               url,
               ext: 'mp4',
-              label: `${quality} Full Video`,
+              label: `${quality} (${labelSuffix})`,
               formattedSize,
-              isHls: false,
+              isHls: Boolean(f.protocol && f.protocol.includes('m3u8')),
             });
           }
 
-          // Fallback if no height was parsed: ensure at least 720p, 480p, 240p options
+          // Fallback if no height was parsed: ensure standard options
           if (formats.length === 0) {
             for (const q of ['720p', '480p', '240p']) {
               formats.push({
@@ -159,12 +164,13 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
                 url: targetUrl,
                 ext: 'mp4',
                 label: `${q} Full Video`,
+                formattedSize: q === '720p' ? '~120 MB' : q === '480p' ? '~65 MB' : '~30 MB',
                 isHls: false,
               });
             }
           }
 
-          // Final sort: 720p > 480p > 360p > 240p
+          // Final sort: 1080p > 720p > 480p > 360p > 240p
           formats.sort((a, b) => {
             const qA = parseInt(a.quality.replace(/\D/g, ''), 10) || 0;
             const qB = parseInt(b.quality.replace(/\D/g, ''), 10) || 0;
@@ -199,7 +205,7 @@ export const metadataCache = new Map<string, { data: VideoMetadata; expiresAt: n
 
 /**
  * Primary Extraction Entrypoint:
- * Uses fast in-memory cache, then ultra-fast 0.3s web scraper, then yt-dlp fallback.
+ * Uses fast in-memory cache, then yt-dlp, then direct HTML scraper fallback.
  */
 export async function extractFromPage(viewkey: string): Promise<VideoMetadata | null> {
   const cached = metadataCache.get(viewkey);
@@ -209,25 +215,25 @@ export async function extractFromPage(viewkey: string): Promise<VideoMetadata | 
 
   const targetUrl = `https://www.pornhub.com/view_video.php?viewkey=${encodeURIComponent(viewkey)}`;
 
-  // 1. Primary: Ultra-Fast Direct Web Scraper (0.3s response time)
-  const scraperResult = await extractFromEmbedFallback(viewkey, targetUrl);
-  if (scraperResult && scraperResult.formats.length > 0) {
-    metadataCache.set(viewkey, { data: scraperResult, expiresAt: Date.now() + 3600 * 1000 });
-    return scraperResult;
-  }
-
-  // 2. Secondary: yt-dlp extractor fallback (strict 3s timeout)
+  // 1. Primary: yt-dlp extractor (Extracts all authentic resolutions up to 1080p)
   const ytDlpResult = await extractWithYtDlp(targetUrl, viewkey);
   if (ytDlpResult && ytDlpResult.formats.length > 0) {
     metadataCache.set(viewkey, { data: ytDlpResult, expiresAt: Date.now() + 3600 * 1000 });
     return ytDlpResult;
   }
 
+  // 2. Secondary: direct embed scraper fallback (pure fetch)
+  const scraperResult = await extractFromEmbedFallback(viewkey, targetUrl);
+  if (scraperResult && scraperResult.formats.length > 0) {
+    metadataCache.set(viewkey, { data: scraperResult, expiresAt: Date.now() + 3600 * 1000 });
+    return scraperResult;
+  }
+
   return null;
 }
 
 /**
- * Fallback Embed Scraper (capped at 720p, 1 card per resolution)
+ * Fallback Embed Scraper (pure fetch for serverless cloud deployment)
  */
 async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Promise<VideoMetadata | null> {
   const embedUrl = `https://www.pornhub.com/embed/${encodeURIComponent(viewkey)}`;
@@ -284,7 +290,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
 
         let u = m[2].replace(/\\\//g, '/');
 
-        const estimatedMb = height >= 720 ? '~85 MB' : height >= 480 ? '~45 MB' : '~20 MB';
+        const estimatedMb = height >= 1080 ? '~180 MB' : height >= 720 ? '~95 MB' : height >= 480 ? '~50 MB' : '~25 MB';
 
         formats.push({
           quality: q,
@@ -311,7 +317,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
       }
     }
   } catch {
-    // Ignore and fallback to direct desktop page scrape
+    // Fallback to desktop page scrape
   }
 
   // Fallback 2: Direct desktop page scrape
@@ -354,7 +360,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
 
         let u = m[2].replace(/\\\//g, '/');
 
-        const estimatedMb = height >= 720 ? '~85 MB' : height >= 480 ? '~45 MB' : '~20 MB';
+        const estimatedMb = height >= 1080 ? '~180 MB' : height >= 720 ? '~95 MB' : height >= 480 ? '~50 MB' : '~25 MB';
 
         formats.push({
           quality: q,
@@ -381,7 +387,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
       }
     }
   } catch {
-    // Ignore fallback errors
+    // ignore
   }
 
   return null;

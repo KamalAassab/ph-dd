@@ -155,7 +155,7 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
 
             <div className="pt-4 mt-4 border-t border-zinc-800/60 flex items-center justify-between text-xs text-zinc-500">
               <span>Source: Pornhub</span>
-              <span>Max: 720p HD</span>
+              <span>Max: {data.formats[0]?.quality ? `${data.formats[0].quality}` : 'HD'}</span>
             </div>
           </div>
         </div>
@@ -193,7 +193,7 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
               Available Resolutions & Sizes
             </h3>
             <span className="text-xs text-zinc-500 font-mono">
-              Total 3 Qualities
+              Total {data.formats.length} {data.formats.length === 1 ? 'Quality' : 'Qualities'}
             </span>
           </div>
 
