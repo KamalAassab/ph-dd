@@ -52,13 +52,11 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
 
     if (onShowToast) onShowToast(`Starting ${format.quality} (${format.formattedSize || ''}) download...`, 'info');
 
-    const sanitizedTitle = (data.title || 'video')
-      .replace(/[^\w\s-]/g, '')
-      .trim()
-      .replace(/\s+/g, '_')
-      .slice(0, 80) || 'video';
+    const cleanExactTitle = (data.title || 'video')
+      .replace(/[\\/:*?"<>|]/g, '')
+      .trim() || 'video';
 
-    const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(sanitizedTitle)}`;
+    const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(cleanExactTitle)}`;
 
     // Dispatch native download
     window.location.assign(downloadApiUrl);
