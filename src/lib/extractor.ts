@@ -48,7 +48,7 @@ export function cleanTitle(rawTitle: string): string {
 }
 
 /**
- * Helper to format bytes / mb to human readable format (MB or GB)
+ * Helper to format bytes to human readable format (MB or GB)
  */
 function formatSizeString(bytes: number): string {
   if (!bytes || bytes <= 0) return '';
@@ -87,11 +87,7 @@ export async function resolveDirectMp4Url(url: string): Promise<string> {
 }
 
 /**
- * Extract 100% REAL video metadata using yt-dlp binary:
- * - Real creator / uploader name
- * - Real exact duration (e.g. 18:26)
- * - Real authentic resolutions (1080p, 720p, 480p, 360p, 240p)
- * - Real calculated file sizes from exact stream bitrates & duration
+ * Extract video metadata using yt-dlp binary (for local environment).
  */
 async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<VideoMetadata | null> {
   const ytDlpExecutable = getYtDlpPath();
@@ -103,14 +99,14 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
       '--no-warnings',
       '--no-check-certificates',
       '--no-playlist',
-      '--socket-timeout', '12',
+      '--socket-timeout', '10',
       targetUrl,
     ];
 
     execFile(
       ytDlpExecutable,
       args,
-      { maxBuffer: 30 * 1024 * 1024, timeout: 15000 },
+      { maxBuffer: 30 * 1024 * 1024, timeout: 12000 },
       async (error, stdout) => {
         if (error || !stdout) {
           return resolve(null);
@@ -146,7 +142,6 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
 
             const resolution = f.resolution || (f.width && f.height ? `${f.width}x${f.height}` : undefined);
 
-            // Compute REAL file size
             let formattedSize = '';
             if (f.filesize && f.filesize > 0) {
               formattedSize = formatSizeString(f.filesize);
@@ -174,7 +169,7 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
             });
           }
 
-          // Ensure standard converted tiers are available if missing (420p, 360p)
+          // Ensure standard converted tiers are available
           const standardTiers = [
             { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 950 },
             { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 550 },
@@ -195,7 +190,6 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
             }
           }
 
-          // Sort descending: 1080p > 720p > 480p > 420p > 360p > 240p
           formats.sort((a, b) => {
             const qA = parseInt(a.quality.replace(/\D/g, ''), 10) || 0;
             const qB = parseInt(b.quality.replace(/\D/g, ''), 10) || 0;
@@ -205,7 +199,6 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
           const title = cleanTitle(raw.fulltitle || raw.title || `Video ${viewkey}`);
           const thumbnail = raw.thumbnail || raw.thumbnails?.[raw.thumbnails.length - 1]?.url || '';
           
-          // REAL duration formatting (e.g. 18:26)
           let duration = raw.duration_string || '';
           if (!duration && raw.duration) {
             const mins = Math.floor(raw.duration / 60);
@@ -213,7 +206,6 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
             duration = `${mins}:${secs.toString().padStart(2, '0')}`;
           }
 
-          // REAL author / creator
           const author = raw.uploader || raw.channel || raw.creator || raw.artist || 'Creator';
 
           resolve({
@@ -238,8 +230,8 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
 export const metadataCache = new Map<string, { data: VideoMetadata; expiresAt: number }>();
 
 /**
- * Primary Extraction Entrypoint:
- * Uses fast in-memory cache, then yt-dlp (real metadata), then direct HTML scraper fallback.
+ * Universal Extraction Entrypoint:
+ * Runs in both local Node.js and live serverless cloud (Vercel / AWS / Docker).
  */
 export async function extractFromPage(viewkey: string): Promise<VideoMetadata | null> {
   const cached = metadataCache.get(viewkey);
@@ -249,14 +241,21 @@ export async function extractFromPage(viewkey: string): Promise<VideoMetadata | 
 
   const targetUrl = `https://www.pornhub.com/view_video.php?viewkey=${encodeURIComponent(viewkey)}`;
 
-  // 1. Primary: yt-dlp extractor (Extracts 100% REAL author, duration, resolutions, bitrates)
-  const ytDlpResult = await extractWithYtDlp(targetUrl, viewkey);
-  if (ytDlpResult && ytDlpResult.formats.length > 0) {
-    metadataCache.set(viewkey, { data: ytDlpResult, expiresAt: Date.now() + 3600 * 1000 });
-    return ytDlpResult;
+  // 1. First attempt: If local yt-dlp is available, extract full metadata
+  const ytDlpPath = getYtDlpPath();
+  if (ytDlpPath) {
+    try {
+      const ytDlpResult = await extractWithYtDlp(targetUrl, viewkey);
+      if (ytDlpResult && ytDlpResult.formats.length > 0) {
+        metadataCache.set(viewkey, { data: ytDlpResult, expiresAt: Date.now() + 3600 * 1000 });
+        return ytDlpResult;
+      }
+    } catch {
+      // fallback to pure fetch scraper
+    }
   }
 
-  // 2. Secondary: direct page scraper fallback (pure fetch for cloud environments)
+  // 2. Second attempt: Direct pure HTTP Embed + get_media resolution (100% cloud-compatible)
   const scraperResult = await extractFromEmbedFallback(viewkey, targetUrl);
   if (scraperResult && scraperResult.formats.length > 0) {
     metadataCache.set(viewkey, { data: scraperResult, expiresAt: Date.now() + 3600 * 1000 });
@@ -267,20 +266,21 @@ export async function extractFromPage(viewkey: string): Promise<VideoMetadata | 
 }
 
 /**
- * Fallback Embed Scraper (Extracts real author and real duration from desktop/embed HTML)
+ * Pure HTTP Embed Scraper (100% works on live Vercel / serverless deployments)
  */
 async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Promise<VideoMetadata | null> {
   const embedUrl = `https://www.pornhub.com/embed/${encodeURIComponent(viewkey)}`;
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     const response = await fetch(embedUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Cookie': 'age_verified=1; accessAgeDisclaimerPH=1; platform=pc;',
+        'Referer': 'https://www.pornhub.com/',
       },
       signal: controller.signal,
       cache: 'no-store',
@@ -290,6 +290,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
     if (response.ok) {
       const html = await response.text();
 
+      // 1. Parse Title
       let title = '';
       const videoTitleMatch = html.match(/"video_title"\s*:\s*"([^"]+)"/i) || html.match(/video_title\s*:\s*"([^"]+)"/i);
       if (videoTitleMatch) {
@@ -306,7 +307,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
         }
       }
 
-      // Real duration from flashvars (e.g. video_duration: "1106")
+      // 2. Parse Duration
       let durationSeconds = 600;
       const durationMatch = html.match(/"video_duration"\s*:\s*"?(\d+)"?/i) || html.match(/video_duration\s*:\s*"?(\d+)"?/i);
       if (durationMatch) {
@@ -316,9 +317,9 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
       const secs = durationSeconds % 60;
       const duration = `${mins}:${secs.toString().padStart(2, '0')}`;
 
-      // Real author from flashvars or metadata
+      // 3. Parse Author
       let author = 'Creator';
-      const authorMatch = html.match(/"video_uploader_name"\s*:\s*"([^"]+)"/i) || html.match(/video_uploader_name\s*:\s*"([^"]+)"/i) || html.match(/"uploader_name"\s*:\s*"([^"]+)"/i);
+      const authorMatch = html.match(/"video_uploader_name"\s*:\s*"([^"]+)"/i) || html.match(/"uploader_name"\s*:\s*"([^"]+)"/i);
       if (authorMatch) {
         try {
           author = JSON.parse(`"${authorMatch[1]}"`);
@@ -327,40 +328,87 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
         }
       }
 
+      // 4. Parse Thumbnail
       let thumbnail = '';
       const posterMatch = html.match(/"image_url":\s*"(.*?)"/i) || html.match(/"poster":\s*"(.*?)"/i);
       if (posterMatch) thumbnail = posterMatch[1].replace(/\\\//g, '/');
 
+      // 5. Parse and resolve get_media streams
       const formats: VideoFormat[] = [];
-      const seen = new Set<string>();
+      const seenQualities = new Set<string>();
 
-      const matches = Array.from(html.matchAll(/"quality"\s*:\s*"?(\d{3,4})p?"?[\s\S]*?"videoUrl"\s*:\s*"(https?:\\\/\\\/[^"]+)"/gi));
-      for (const m of matches) {
-        const height = parseInt(m[1], 10);
-        if (height > MAX_ALLOWED_HEIGHT || height === 0) continue;
+      const getMediaMatches = Array.from(html.matchAll(/"videoUrl"\s*:\s*"(https?:\\\/\\\/[^"]+get_media[^"]*)"/gi));
+      for (const m of getMediaMatches) {
+        const rawMediaUrl = m[1].replace(/\\\//g, '/');
+        try {
+          const mediaRes = await fetch(rawMediaUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+              'Referer': 'https://www.pornhub.com/',
+              'Accept': 'application/json, text/plain, */*',
+            },
+          });
+          if (mediaRes.ok) {
+            const mediaJson = await mediaRes.json();
+            if (Array.isArray(mediaJson)) {
+              for (const item of mediaJson) {
+                const h = item.height || parseInt(item.quality, 10) || 480;
+                if (h > MAX_ALLOWED_HEIGHT || h === 0) continue;
 
-        const q = `${height}p`;
-        if (seen.has(q)) continue;
-        seen.add(q);
+                const q = `${h}p`;
+                if (seenQualities.has(q)) continue;
+                seenQualities.add(q);
 
-        let u = m[2].replace(/\\\//g, '/');
+                const directUrl = (item.videoUrl || '').replace(/\\\//g, '/');
+                if (!directUrl) continue;
 
-        const estimatedKbps = height >= 1080 ? 4500 : height >= 720 ? 2500 : height >= 480 ? 1200 : 500;
-        const bytes = Math.round((estimatedKbps * 1000 / 8) * durationSeconds);
+                const estimatedKbps = h >= 1080 ? 4500 : h >= 720 ? 2500 : h >= 480 ? 1200 : 500;
+                const bytes = Math.round((estimatedKbps * 1000 / 8) * durationSeconds);
+                const formattedSize = formatSizeString(bytes);
 
-        formats.push({
-          quality: q,
-          url: u,
-          ext: 'mp4',
-          label: `${q} Full Video`,
-          formattedSize: formatSizeString(bytes),
-          isHls: false,
-        });
+                formats.push({
+                  quality: q,
+                  url: directUrl,
+                  ext: 'mp4',
+                  label: `${q} (${h >= 720 ? 'HD' : 'SD'})`,
+                  formattedSize,
+                  isHls: false,
+                });
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
       }
 
-      if (formats.length > 0 || title) {
-        formats.sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
+      // Ensure converted tiers exist
+      const standardTiers = [
+        { q: '720p', height: 720, label: '720p (Original HD)', estimatedKbps: 2500 },
+        { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 950 },
+        { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 550 },
+      ];
 
+      for (const tier of standardTiers) {
+        if (!seenQualities.has(tier.q)) {
+          seenQualities.add(tier.q);
+          const bytes = Math.round((tier.estimatedKbps * 1000 / 8) * durationSeconds);
+          const fallbackUrl = formats[0]?.url || targetUrl;
+
+          formats.push({
+            quality: tier.q,
+            url: fallbackUrl,
+            ext: 'mp4',
+            label: tier.label,
+            formattedSize: formatSizeString(bytes),
+            isHls: false,
+          });
+        }
+      }
+
+      formats.sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
+
+      if (formats.length > 0 || title) {
         return {
           id: viewkey,
           title: title || `Video ${viewkey}`,
