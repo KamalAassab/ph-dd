@@ -102,7 +102,7 @@ export default function UrlInputForm({ onSubmit, isLoading, onShowToast }: UrlIn
               onChange={handleInputChange}
               placeholder="Paste Pornhub video link here..."
               aria-label="Video URL input"
-              className="w-full bg-transparent text-white text-sm sm:text-base placeholder-zinc-500 focus:outline-none pr-14"
+              className="w-full bg-transparent text-white text-base placeholder-zinc-500 focus:outline-none pr-14"
               disabled={isLoading}
               autoComplete="off"
               autoCorrect="off"

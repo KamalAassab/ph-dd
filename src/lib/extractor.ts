@@ -4,8 +4,8 @@ import fs from 'fs';
 import os from 'os';
 import { VideoFormat, VideoMetadata } from './types';
 
-// Support full authentic resolutions up to 1080p Full HD
-const MAX_ALLOWED_HEIGHT = 1080;
+// Supported resolutions capped at 720P (1080P hidden per user requirement)
+const MAX_ALLOWED_HEIGHT = 720;
 
 /**
  * Locate the best available yt-dlp executable on the system (Windows or Linux/Vercel).
@@ -166,9 +166,9 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
 
           for (const f of sortedRaw) {
             const h = f.height || 0;
-            if (h === 0) continue;
+            if (h === 0 || h > MAX_ALLOWED_HEIGHT) continue;
 
-            const quality = `${h}p`;
+            const quality = `${h}P`;
             if (seenQualities.has(quality)) continue;
             seenQualities.add(quality);
 
@@ -190,12 +190,12 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
               const bytes = Math.round((f.tbr * 1000 / 8) * durationSeconds);
               formattedSize = formatSizeString(bytes);
             } else if (durationSeconds > 0) {
-              const estimatedKbps = h >= 1080 ? 4500 : h >= 720 ? 2500 : h >= 480 ? 1200 : 500;
+              const estimatedKbps = h >= 720 ? 2500 : h >= 480 ? 1200 : h >= 360 ? 650 : 350;
               const bytes = Math.round((estimatedKbps * 1000 / 8) * durationSeconds);
               formattedSize = formatSizeString(bytes);
             }
 
-            const labelSuffix = h >= 1080 ? 'Full HD' : h >= 720 ? 'HD' : h >= 480 ? 'SD' : 'Mobile';
+            const labelSuffix = h >= 720 ? 'HD' : h >= 480 ? 'SD' : 'Mobile';
 
             formats.push({
               quality,
@@ -212,10 +212,12 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
             bestDirectCdnUrl = formats[0].url;
           }
 
-          // Ensure standard tiers have a real media stream URL (never an HTML page!)
+          // Ensure exact requested standard tiers (720P, 480P, 360P, 240P)
           const standardTiers = [
-            { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 950 },
-            { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 550 },
+            { q: '720P', height: 720, label: '720P (HD)', estimatedKbps: 2500 },
+            { q: '480P', height: 480, label: '480P (SD)', estimatedKbps: 1200 },
+            { q: '360P', height: 360, label: '360P (Mobile)', estimatedKbps: 650 },
+            { q: '240P', height: 240, label: '240P (Low Data)', estimatedKbps: 350 },
           ];
 
           for (const tier of standardTiers) {
@@ -461,7 +463,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
                 const h = item.height || parseInt(item.quality, 10) || 480;
                 if (h > MAX_ALLOWED_HEIGHT || h === 0) continue;
 
-                const q = `${h}p`;
+                const q = `${h}P`;
                 if (seenQualities.has(q)) continue;
                 seenQualities.add(q);
 
@@ -472,7 +474,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
                   bestDirectCdnUrl = directUrl;
                 }
 
-                const estimatedKbps = h >= 1080 ? 4500 : h >= 720 ? 2500 : h >= 480 ? 1200 : 500;
+                const estimatedKbps = h >= 720 ? 2500 : h >= 480 ? 1200 : h >= 360 ? 650 : 350;
                 const bytes = Math.round((estimatedKbps * 1000 / 8) * durationSeconds);
                 const formattedSize = formatSizeString(bytes);
 
@@ -495,9 +497,10 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
       // If get_media gave direct stream, use it for standard tiers
       if (bestDirectCdnUrl) {
         const standardTiers = [
-          { q: '720p', height: 720, label: '720p (Original HD)', estimatedKbps: 2500 },
-          { q: '420p', height: 420, label: '420p (Standard)', estimatedKbps: 950 },
-          { q: '360p', height: 360, label: '360p (Mobile)', estimatedKbps: 550 },
+          { q: '720P', height: 720, label: '720P (HD)', estimatedKbps: 2500 },
+          { q: '480P', height: 480, label: '480P (SD)', estimatedKbps: 1200 },
+          { q: '360P', height: 360, label: '360P (Mobile)', estimatedKbps: 650 },
+          { q: '240P', height: 240, label: '240P (Low Data)', estimatedKbps: 350 },
         ];
 
         for (const tier of standardTiers) {
