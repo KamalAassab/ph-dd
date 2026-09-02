@@ -131,24 +131,33 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         const videoPageUrl = `https://www.pornhub.com/view_video.php?viewkey=${viewkey}`;
         const ffmpegDir = getFfmpegDir();
 
+        const hasFfmpeg = Boolean(ffmpegDir);
         const isOriginal = qualityHeight >= 480;
         const ffmpegPostArgs = isOriginal
           ? 'ffmpeg:-movflags +faststart'
           : `ffmpeg:-vf scale=-2:${qualityHeight} -c:v libx264 -preset ultrafast -crf 24 -c:a copy -movflags +faststart`;
 
+        const formatSelector = hasFfmpeg
+          ? (isOriginal
+              ? `bestvideo[height<=${qualityHeight}]+bestaudio/best[height<=${qualityHeight}][ext=mp4]/best[ext=mp4]/best`
+              : 'bestvideo+bestaudio/best[ext=mp4]/best')
+          : `best[height<=${qualityHeight}][ext=mp4][protocol=https]/best[ext=mp4][protocol=https]/best[ext=mp4]/best`;
+
         const spawnArgs = [
-          '-f', isOriginal
-            ? `bestvideo[height<=${qualityHeight}]+bestaudio/best[height<=${qualityHeight}]/best`
-            : 'bestvideo+bestaudio/best',
+          '-f', formatSelector,
           videoPageUrl,
           '-N', '16',
-          '--postprocessor-args', ffmpegPostArgs,
           '-o', cachedFilePath,
           '--no-warnings',
           '--no-check-certificates',
+          '--geo-bypass',
+          '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+          '--add-header', 'Cookie:age_verified=1; accessAgeDisclaimerPH=1; platform=pc;',
+          '--add-header', 'Referer:https://www.pornhub.com/',
         ];
 
-        if (ffmpegDir) {
+        if (hasFfmpeg) {
+          spawnArgs.push('--postprocessor-args', ffmpegPostArgs);
           spawnArgs.push('--ffmpeg-location', ffmpegDir);
         }
 
@@ -224,11 +233,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     let targetStreamUrl = '';
 
-    // Step 1: If client passed an existing direct CDN URL that is valid, use it
+    // Step 1: If client passed an existing direct CDN URL that is valid and not m3u8, use it
     if (
       rawStreamUrl &&
       rawStreamUrl.startsWith('http') &&
       !rawStreamUrl.includes('view_video.php') &&
+      !rawStreamUrl.includes('.m3u8') &&
       (rawStreamUrl.includes('phncdn.com') || rawStreamUrl.includes('/video/'))
     ) {
       targetStreamUrl = rawStreamUrl;
@@ -239,11 +249,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       targetStreamUrl = await getFreshStreamUrl(viewkey, qualityHeight);
     }
 
-    // Step 3: If still empty, fall back to extractFromPage
+    // Step 3: If still empty, fall back to extractFromPage (prefer non-m3u8)
     if (!targetStreamUrl) {
       const videoData = await extractFromPage(viewkey);
       if (videoData && videoData.formats.length > 0) {
-        const matchingFmt = videoData.formats.find((f) => f.quality === cleanQuality) || videoData.formats[0];
+        const matchingFmt =
+          videoData.formats.find((f) => f.quality === cleanQuality && !f.url.includes('.m3u8')) ||
+          videoData.formats.find((f) => !f.url.includes('.m3u8')) ||
+          videoData.formats[0];
+
         if (matchingFmt && matchingFmt.url && !matchingFmt.url.includes('view_video.php')) {
           targetStreamUrl = matchingFmt.url;
         }
@@ -265,6 +279,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       'Referer': 'https://www.pornhub.com/',
       'Accept': '*/*',
+      'Accept-Encoding': 'identity',
     };
     if (clientRange) {
       upstreamHeaders['Range'] = clientRange;

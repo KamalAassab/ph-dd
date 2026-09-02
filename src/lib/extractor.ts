@@ -148,11 +148,17 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
 
           const durationSeconds = raw.duration || 600;
 
-          // Sort raw formats: highest bitrate / height first
+          // Sort raw formats:
+          // 1. Height descending (up to MAX_ALLOWED_HEIGHT)
+          // 2. Direct HTTPS MP4 strongly preferred over HLS m3u8
+          // 3. Bitrate descending
           const sortedRaw = [...rawFormats]
             .filter((f) => f.height && f.height <= MAX_ALLOWED_HEIGHT)
             .sort((a, b) => {
               if (b.height !== a.height) return (b.height || 0) - (a.height || 0);
+              const aIsDirect = (a.protocol === 'https' && a.ext === 'mp4' && !a.protocol?.includes('m3u8')) ? 1 : 0;
+              const bIsDirect = (b.protocol === 'https' && b.ext === 'mp4' && !b.protocol?.includes('m3u8')) ? 1 : 0;
+              if (bIsDirect !== aIsDirect) return bIsDirect - aIsDirect;
               return (b.tbr || 0) - (a.tbr || 0);
             });
 
