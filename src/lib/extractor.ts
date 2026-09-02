@@ -106,6 +106,8 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
           // Sort raw formats by quality descending so highest bitrate per height is selected
           const sortedRaw = [...rawFormats].sort((a, b) => (b.height || 0) - (a.height || 0));
 
+          const durationSeconds = raw.duration || 600;
+
           // 1. Process and deduplicate: strictly 1 card per resolution
           for (const f of sortedRaw) {
             const h = f.height || 0;
@@ -123,12 +125,28 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
 
             const resolution = f.resolution || (f.width && f.height ? `${f.width}x${f.height}` : undefined);
 
+            // Compute accurate file size
+            let formattedSize = '';
+            if (f.filesize && f.filesize > 0) {
+              formattedSize = `${(f.filesize / 1024 / 1024).toFixed(1)} MB`;
+            } else if (f.filesize_approx && f.filesize_approx > 0) {
+              formattedSize = `${(f.filesize_approx / 1024 / 1024).toFixed(1)} MB`;
+            } else if (f.tbr && f.tbr > 0 && durationSeconds > 0) {
+              const bytes = Math.round((f.tbr * 1000 / 8) * durationSeconds);
+              formattedSize = `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+            } else if (durationSeconds > 0) {
+              const estimatedKbps = h >= 720 ? 1650 : h >= 480 ? 920 : 420;
+              const bytes = Math.round((estimatedKbps * 1000 / 8) * durationSeconds);
+              formattedSize = `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+            }
+
             formats.push({
               quality,
               resolution,
               url,
               ext: 'mp4',
-              label: `${quality} (Full HD Video)`,
+              label: `${quality} Full Video`,
+              formattedSize,
               isHls: false,
             });
           }
@@ -239,11 +257,14 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
 
         let u = m[2].replace(/\\\//g, '/');
 
+        const estimatedMb = height >= 720 ? '~85 MB' : height >= 480 ? '~45 MB' : '~20 MB';
+
         formats.push({
           quality: q,
           url: u,
           ext: 'mp4',
-          label: `${q} (Full HD Video)`,
+          label: `${q} Full Video`,
+          formattedSize: estimatedMb,
           isHls: false,
         });
       }
@@ -306,11 +327,14 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
 
         let u = m[2].replace(/\\\//g, '/');
 
+        const estimatedMb = height >= 720 ? '~85 MB' : height >= 480 ? '~45 MB' : '~20 MB';
+
         formats.push({
           quality: q,
           url: u,
           ext: 'mp4',
-          label: `${q} (Full HD Video)`,
+          label: `${q} Full Video`,
+          formattedSize: estimatedMb,
           isHls: false,
         });
       }

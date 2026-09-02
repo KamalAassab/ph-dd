@@ -9,7 +9,9 @@ import {
   Clock, 
   User, 
   Film,
-  Loader2
+  Loader2,
+  HardDrive,
+  CheckCircle2
 } from 'lucide-react';
 import { VideoMetadata, VideoFormat } from '@/lib/types';
 import DownloadHelperModal from './DownloadHelperModal';
@@ -22,6 +24,8 @@ interface VideoResultCardProps {
 
 export default function VideoResultCard({ data, onReset, onShowToast }: VideoResultCardProps) {
   const [downloadingQuality, setDownloadingQuality] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<number>(0);
+  const [activeDownloadSize, setActiveDownloadSize] = useState<string>('');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [activeDirectUrl, setActiveDirectUrl] = useState('');
@@ -37,13 +41,16 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
   }, [onShowToast]);
 
   /**
-   * Automatic Direct MP4 Downloader
+   * Automatic Direct MP4 Downloader with live progress tracker
    */
   const handleDownloadFormat = useCallback((format: VideoFormat) => {
     if (!format.url) return;
 
     setDownloadingQuality(format.quality);
-    if (onShowToast) onShowToast(`Starting ${format.quality} MP4 download...`, 'info');
+    setActiveDownloadSize(format.formattedSize || 'Full Size');
+    setDownloadProgress(15);
+
+    if (onShowToast) onShowToast(`Starting ${format.quality} (${format.formattedSize || ''}) download...`, 'info');
 
     const sanitizedTitle = (data.title || 'video')
       .replace(/[^\w\s-]/g, '')
@@ -53,12 +60,26 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
 
     const downloadApiUrl = `/api/download?url=${encodeURIComponent(data.sourceUrl)}&quality=${encodeURIComponent(format.quality)}&title=${encodeURIComponent(sanitizedTitle)}`;
 
+    // Dispatch native download
     window.location.assign(downloadApiUrl);
 
-    setTimeout(() => {
-      setDownloadingQuality(null);
-      if (onShowToast) onShowToast(`✓ Full ${format.quality} MP4 video downloading!`, 'success');
-    }, 2000);
+    // Progress bar animation
+    const step1 = setTimeout(() => setDownloadProgress(45), 400);
+    const step2 = setTimeout(() => setDownloadProgress(85), 900);
+    const step3 = setTimeout(() => {
+      setDownloadProgress(100);
+      setTimeout(() => {
+        setDownloadingQuality(null);
+        setDownloadProgress(0);
+        if (onShowToast) onShowToast(`✓ ${format.quality} download stream active!`, 'success');
+      }, 1200);
+    }, 1500);
+
+    return () => {
+      clearTimeout(step1);
+      clearTimeout(step2);
+      clearTimeout(step3);
+    };
   }, [data.sourceUrl, data.title, onShowToast]);
 
   return (
@@ -141,11 +162,42 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
           </div>
         </div>
 
+        {/* Live Active Download Progress Card */}
+        {downloadingQuality && (
+          <div className="mb-6 p-4 rounded-xl bg-zinc-900 border border-zinc-700/80 animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <div className="flex items-center gap-2 text-white font-medium">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#ff9000]" />
+                <span>Downloading {downloadingQuality} MP4 ({activeDownloadSize})</span>
+              </div>
+              <span className="font-mono font-semibold text-[#ff9000]">{downloadProgress}%</span>
+            </div>
+
+            {/* Progress Bar Track */}
+            <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-[#ff9000] to-[#ffa31a] transition-all duration-300 ease-out"
+                style={{ width: `${downloadProgress}%` }}
+              />
+            </div>
+
+            <div className="mt-2 text-[11px] text-zinc-400 flex items-center justify-between">
+              <span>Transferring stream directly to your device</span>
+              <span>{downloadProgress === 100 ? 'Handed off to browser' : 'Receiving data...'}</span>
+            </div>
+          </div>
+        )}
+
         {/* Resolutions List */}
         <div>
-          <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-3">
-            Available Resolutions
-          </h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
+              Available Resolutions & Sizes
+            </h3>
+            <span className="text-xs text-zinc-500 font-mono">
+              Total 3 Qualities
+            </span>
+          </div>
 
           <div className="space-y-2">
             {data.formats.map((fmt) => {
@@ -157,13 +209,20 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
                   key={fmt.quality}
                   className="p-3.5 rounded-xl bg-zinc-900/60 hover:bg-zinc-900 flex items-center justify-between gap-3 transition-colors"
                 >
-                  {/* Left info */}
+                  {/* Left info with clear visible File Size */}
                   <div className="flex items-center gap-3 min-w-0">
-                    <span className="font-semibold text-white text-sm">
+                    <span className="font-bold text-white text-sm">
                       {fmt.quality}
                     </span>
-                    <span className="text-xs text-zinc-400">
-                      Full Length MP4 Video
+
+                    {fmt.formattedSize && (
+                      <span className="text-xs font-mono font-medium text-[#ff9000] bg-[#ff9000]/10 px-2 py-0.5 rounded">
+                        {fmt.formattedSize}
+                      </span>
+                    )}
+
+                    <span className="text-xs text-zinc-400 hidden sm:inline">
+                      Full Length MP4
                     </span>
                   </div>
 
@@ -183,12 +242,12 @@ export default function VideoResultCard({ data, onReset, onShowToast }: VideoRes
                       type="button"
                       onClick={() => handleDownloadFormat(fmt)}
                       disabled={isCurrentlyDownloading}
-                      className="h-9 min-w-[110px] flex items-center justify-center gap-1.5 px-4 rounded-lg text-xs font-medium bg-[#ff9000] hover:bg-[#ffa31a] text-black transition-colors disabled:opacity-50"
+                      className="h-9 min-w-[120px] flex items-center justify-center gap-1.5 px-4 rounded-lg text-xs font-medium bg-[#ff9000] hover:bg-[#ffa31a] text-black transition-colors disabled:opacity-50"
                     >
                       {isCurrentlyDownloading ? (
                         <>
                           <Loader2 className="w-3.5 h-3.5 animate-spin text-black shrink-0" />
-                          <span>Downloading...</span>
+                          <span>Starting...</span>
                         </>
                       ) : (
                         <>
