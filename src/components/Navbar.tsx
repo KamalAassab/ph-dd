@@ -2,8 +2,8 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import { HelpCircle, Sparkles, ShieldCheck } from 'lucide-react';
-import SikoSikoLogo from './SikoSikoLogo';
+import { HelpCircle } from 'lucide-react';
+import PornSaverLogo from './PornSaverLogo';
 
 interface NavbarProps {
   onOpenGuide?: () => void;
@@ -13,14 +13,14 @@ export default function Navbar({ onOpenGuide }: NavbarProps) {
   return (
     <header className="w-full border-b border-zinc-800/60 bg-[#09090b]/80 backdrop-blur-xl sticky top-0 z-40 transition-all">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-        {/* Brand Logo: SikoSiko Hub */}
+        {/* Brand Logo: PornSaver */}
         <motion.div 
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           className="cursor-pointer"
           onClick={() => window.location.assign('/')}
         >
-          <SikoSikoLogo size="md" />
+          <PornSaverLogo size="md" />
         </motion.div>
 
         {/* Right Nav Status & Actions */}

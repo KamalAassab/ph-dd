@@ -11,7 +11,7 @@ import {
   Layers, 
   CheckCircle2 
 } from 'lucide-react';
-import SikoSikoLogo from './SikoSikoLogo';
+import PornSaverLogo from './PornSaverLogo';
 
 const FEATURES = [
   {
@@ -154,11 +154,11 @@ export default function FeaturesAndFaq() {
         </div>
       </section>
 
-      {/* Footer with Transparent SikoSikoLogo */}
+      {/* Footer with PornSaverLogo */}
       <footer className="pt-12 pb-8 border-t border-zinc-800/60 flex flex-col items-center justify-center gap-3 text-center">
-        <SikoSikoLogo size="sm" />
+        <PornSaverLogo size="sm" />
         <p className="text-xs text-zinc-500">
-          SikoSiko Hub • Ultra-Fast HD Video Downloader
+          PornSaver • Ultra-Fast HD Video Downloader
         </p>
         <p className="text-[11px] text-zinc-600">
           Stateless, secure, and multi-threaded video streaming engine.

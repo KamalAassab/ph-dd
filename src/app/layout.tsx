@@ -17,13 +17,13 @@ const monoFont = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'SikoSiko Hub - Ultra-Fast HD Video Downloader',
-  description: 'Download full HD 1080p, 720p, 420p, and 360p MP4 videos with authentic file sizes and multi-threaded speed on SikoSiko Hub.',
-  keywords: ['SikoSiko Hub', 'video downloader', '1080p downloader', '720p downloader', 'fast mp4 downloader'],
-  authors: [{ name: 'SikoSiko Hub' }],
+  title: 'PornSaver - Ultra-Fast HD Video Downloader',
+  description: 'Download full HD 1080p, 720p, 420p, and 360p MP4 videos with authentic file sizes and multi-threaded speed on PornSaver.',
+  keywords: ['PornSaver', 'video downloader', '1080p downloader', '720p downloader', 'fast mp4 downloader'],
+  authors: [{ name: 'PornSaver' }],
   openGraph: {
-    title: 'SikoSiko Hub - Ultra-Fast HD Video Downloader',
-    description: 'Ultra-fast video extraction and direct multi-threaded downloading with SikoSiko Hub.',
+    title: 'PornSaver - Ultra-Fast HD Video Downloader',
+    description: 'Ultra-fast video extraction and direct multi-threaded downloading with PornSaver.',
     type: 'website',
   },
 };
