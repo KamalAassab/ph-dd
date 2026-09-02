@@ -17,13 +17,13 @@ const monoFont = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'l7wa Hub - Fast HD Video Downloader',
-  description: 'Download high quality 720p HD, 480p, and 240p videos directly with l7wa Hub.',
-  keywords: ['l7wa Hub', 'video downloader', '720p downloader', 'fast mp4 downloader', 'nextjs video downloader'],
-  authors: [{ name: 'l7wa Hub' }],
+  title: 'SikoSiko Hub - Ultra-Fast HD Video Downloader',
+  description: 'Download full HD 1080p, 720p, 420p, and 360p MP4 videos with authentic file sizes and multi-threaded speed on SikoSiko Hub.',
+  keywords: ['SikoSiko Hub', 'video downloader', '1080p downloader', '720p downloader', 'fast mp4 downloader'],
+  authors: [{ name: 'SikoSiko Hub' }],
   openGraph: {
-    title: 'l7wa Hub - Fast HD Video Downloader',
-    description: 'Ultra-fast video extraction and direct downloading with l7wa Hub.',
+    title: 'SikoSiko Hub - Ultra-Fast HD Video Downloader',
+    description: 'Ultra-fast video extraction and direct multi-threaded downloading with SikoSiko Hub.',
     type: 'website',
   },
 };
