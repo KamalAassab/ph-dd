@@ -11,6 +11,8 @@ const execFileAsync = util.promisify(execFile);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const preferredRegion = ['fra1', 'cdg1', 'lhr1'];
+export const maxDuration = 60;
 
 function getCacheDir(): string {
   const dir = path.join(os.tmpdir(), 'ph_video_cache');

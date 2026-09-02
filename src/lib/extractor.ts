@@ -1,21 +1,43 @@
 import { execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { VideoFormat, VideoMetadata } from './types';
 
 // Support full authentic resolutions up to 1080p Full HD
 const MAX_ALLOWED_HEIGHT = 1080;
 
 /**
- * Locate the best available yt-dlp executable on the system.
+ * Locate the best available yt-dlp executable on the system (Windows or Linux/Vercel).
  */
 export function getYtDlpPath(): string | null {
+  // 1. Windows local bin
   const localBin = path.resolve(process.cwd(), 'bin', 'yt-dlp.exe');
   if (fs.existsSync(localBin)) return localBin;
 
+  // 2. Linux local bin (Vercel serverless environment)
   const localLinuxBin = path.resolve(process.cwd(), 'bin', 'yt-dlp');
-  if (fs.existsSync(localLinuxBin)) return localLinuxBin;
+  if (fs.existsSync(localLinuxBin)) {
+    try {
+      fs.chmodSync(localLinuxBin, 0o755);
+    } catch {
+      // ignore
+    }
+    return localLinuxBin;
+  }
 
+  // 3. Writable /tmp location (if unpacked on serverless)
+  const tmpLinuxBin = path.join(os.tmpdir(), 'yt-dlp');
+  if (fs.existsSync(tmpLinuxBin)) {
+    try {
+      fs.chmodSync(tmpLinuxBin, 0o755);
+    } catch {
+      // ignore
+    }
+    return tmpLinuxBin;
+  }
+
+  // 4. Windows Scoop shims
   const scoopBin = 'C:\\Users\\4B\\scoop\\shims\\yt-dlp.exe';
   if (fs.existsSync(scoopBin)) return scoopBin;
 
@@ -87,7 +109,7 @@ export async function resolveDirectMp4Url(url: string): Promise<string> {
 }
 
 /**
- * Extract video metadata using yt-dlp binary (for local environment).
+ * Extract video metadata using yt-dlp binary with geo-bypass and browser headers.
  */
 async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<VideoMetadata | null> {
   const ytDlpExecutable = getYtDlpPath();
@@ -99,14 +121,19 @@ async function extractWithYtDlp(targetUrl: string, viewkey: string): Promise<Vid
       '--no-warnings',
       '--no-check-certificates',
       '--no-playlist',
+      '--geo-bypass',
+      '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      '--add-header', 'Cookie:age_verified=1; accessAgeDisclaimerPH=1; platform=pc; hasVisited=1;',
+      '--add-header', 'Referer:https://www.pornhub.com/',
       '--socket-timeout', '10',
+      '--extractor-retries', '3',
       targetUrl,
     ];
 
     execFile(
       ytDlpExecutable,
       args,
-      { maxBuffer: 30 * 1024 * 1024, timeout: 12000 },
+      { maxBuffer: 30 * 1024 * 1024, timeout: 18000 },
       async (error, stdout) => {
         if (error || !stdout) {
           return resolve(null);
@@ -251,7 +278,7 @@ export async function extractFromPage(viewkey: string): Promise<VideoMetadata | 
 
   const targetUrl = `https://www.pornhub.com/view_video.php?viewkey=${encodeURIComponent(viewkey)}`;
 
-  // 1. First attempt: If local yt-dlp is available, extract full metadata
+  // 1. First attempt: If yt-dlp is available (Windows local or Linux Vercel), extract with yt-dlp
   const ytDlpPath = getYtDlpPath();
   if (ytDlpPath) {
     try {
@@ -265,7 +292,7 @@ export async function extractFromPage(viewkey: string): Promise<VideoMetadata | 
     }
   }
 
-  // 2. Second attempt: Direct pure HTTP Embed + get_media resolution (100% cloud-compatible)
+  // 2. Second attempt: Direct pure HTTP Embed + get_media resolution with geo-bypass headers
   const scraperResult = await extractFromEmbedFallback(viewkey, targetUrl);
   if (scraperResult && scraperResult.formats.length > 0) {
     metadataCache.set(viewkey, { data: scraperResult, expiresAt: Date.now() + 3600 * 1000 });
@@ -276,21 +303,22 @@ export async function extractFromPage(viewkey: string): Promise<VideoMetadata | 
 }
 
 /**
- * Pure HTTP Embed Scraper (100% works on live Vercel / serverless deployments)
+ * Pure HTTP Embed Scraper with anti-geoblock headers (100% cloud-compatible).
  */
 async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Promise<VideoMetadata | null> {
   const embedUrl = `https://www.pornhub.com/embed/${encodeURIComponent(viewkey)}`;
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
 
     const response = await fetch(embedUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Cookie': 'age_verified=1; accessAgeDisclaimerPH=1; platform=pc;',
+        'Cookie': 'age_verified=1; accessAgeDisclaimerPH=1; platform=pc; hasVisited=1; il=en;',
         'Referer': 'https://www.pornhub.com/',
+        'X-Forwarded-For': '185.220.101.5',
       },
       signal: controller.signal,
       cache: 'no-store',
@@ -339,8 +367,9 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
           const pageRes = await fetch(targetUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-              'Cookie': 'age_verified=1; platform=pc;',
+              'Cookie': 'age_verified=1; accessAgeDisclaimerPH=1; platform=pc; hasVisited=1; il=en;',
               'Referer': 'https://www.google.com/',
+              'X-Forwarded-For': '185.220.101.5',
             },
             signal: AbortSignal.timeout(3500),
           });
@@ -416,6 +445,7 @@ async function extractFromEmbedFallback(viewkey: string, targetUrl: string): Pro
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
               'Referer': 'https://www.pornhub.com/',
               'Accept': 'application/json, text/plain, */*',
+              'X-Forwarded-For': '185.220.101.5',
             },
           });
           if (mediaRes.ok) {
